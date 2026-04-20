@@ -1,0 +1,90 @@
+# use-agent configuration
+#
+# Copy this file to one of:
+#   ~/.config/use-agent/config.toml   (default location)
+#   $XDG_CONFIG_HOME/use-agent/config.toml
+#   the path set in USE_AGENT_CONFIG
+#
+# This file is how you tell the agent who "you" are and which senders
+# to treat as internal. Nothing here is committed by default; the
+# real config.toml is gitignored.
+
+[user]
+# Name used in the reply prompt's voice guidelines.
+name = "Your Name"
+# Organization the user works for. Referenced throughout the
+# classifier rules ("pitches to {organization}", "current vendor",
+# etc.).
+organization = "Your Company"
+
+[safelist]
+# Domains whose senders are never classified as cold sales. These
+# are also appended to the Gmail search query as -from:<domain>
+# filters so internal mail is never fetched.
+domains = [
+  "example.com",
+  "example.net",
+]
+
+[vendors]
+# Current vendor names to exempt from cold-sales classification
+# when the message is about billing, renewal, or account
+# management. Vendor sales reps trying to upsell still get flagged.
+names = [
+  "AWS",
+  "GitHub",
+]
+
+[voice]
+# Voice guidelines for the reply generator. Rendered verbatim as a
+# bulleted list under "## Voice Guidelines" in the reply prompt, so
+# edit freely to match how you actually write.
+guidelines = [
+  "1-2 sentences maximum, never more",
+  "No apology for declining",
+  "No explanation beyond what's necessary",
+  "Blunt but not hostile",
+  "Always ends with a remove request (except `specific_decline`)",
+]
+# Footer appended to every reply, separated from the reply body by a
+# blank line. Set to "" to disable. Leading "---" is a mild
+# disclaimer separator — change or remove it to taste.
+footer = """\
+---
+This email was flagged as unsolicited sales outreach and this reply
+was sent on {{ user_name }}'s behalf by an automated assistant.\
+"""
+
+[voice.examples]
+# Per-mode example replies. These are injected into the reply prompt
+# as few-shot examples — the single biggest lever on voice, so edit
+# freely to match how you actually write. Each entry may use Jinja
+# (e.g. {{ organization }}).
+
+hard_remove = [
+  "I'm not interested, please remove.",
+  "No thanks, please remove me from your list.",
+  "Not interested. Please remove me from your list.",
+]
+hard_remove_with_correction = [
+  "I think your list sold you the wrong contact at {{ organization }}.",
+  "We're good. Please remove me from your list.",
+  "Sorry, why are you sending this to me?",
+]
+specific_decline = [
+  "I really don't see a need to jump on a call right now. We're happy with our <Vendor Name> use, such a call would primarily benefit you, not us.",
+  "It's just not a fit for us right now. I'll keep your info on file and reach out should that change.",
+]
+
+[agent]
+# Claude model that drives the agent.
+model = "claude-haiku-4-5-20251001"
+
+[search]
+# Max candidate messages examined per run.
+max_results = 25
+
+# Override the Gmail search query. If omitted, the query is built
+# from "in:inbox is:unread" plus a -from:<domain> filter for every
+# safelist domain.
+# query = "in:inbox is:unread"

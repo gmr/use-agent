@@ -1,0 +1,106 @@
+[build-system]
+requires = ["hatch-vcs", "hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "use-agent"
+version = "1.0.0b1"
+description = "Claude Agent that triages unsolicited sales email in Gmail."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "BSD-3-Clause"
+authors = [{ name = "Gavin M. Roy", email = "gavinmroy@gmail.com" }]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: BSD License",
+  "Operating System :: POSIX",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Topic :: Communications :: Email",
+]
+dependencies = [
+  "claude-agent-sdk>=0.1.0",
+  "google-api-python-client>=2.150",
+  "google-auth-httplib2>=0.2",
+  "google-auth-oauthlib>=1.2",
+  "jinja2>=3.1",
+  "rich>=13.9",
+]
+
+[project.scripts]
+use-agent = "use_agent.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/gmr/use-agent"
+
+[dependency-groups]
+dev = [
+  "coverage[toml]",
+  "pytest",
+  "pytest-asyncio",
+  "ruff",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["use_agent"]
+
+[tool.hatch.build.targets.wheel.force-include]
+'use_agent/prompts' = "use_agent/prompts"
+
+[tool.ruff]
+line-length = 79
+target-version = "py314"
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint]
+select = [
+  "ASYNC",
+  "B",
+  "BLE",
+  "C4",
+  "C90",
+  "DTZ",
+  "E",
+  "W",
+  "F",
+  "FURB",
+  "G",
+  "I",
+  "N",
+  "Q",
+  "RUF",
+  "S",
+  "T20",
+  "UP",
+]
+flake8-quotes = { inline-quotes = "single" }
+
+[tool.ruff.lint.per-file-ignores]
+'tests/*.py' = ["S101", "S105", "S106"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["use_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+branch = true
+source = ["use_agent"]
+command_line = "-m pytest"
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.coverage.html]
+directory = "build/coverage"
+
+[tool.coverage.xml]
+output = "build/coverage.xml"

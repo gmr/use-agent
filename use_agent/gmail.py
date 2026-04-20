@@ -1,0 +1,246 @@
+"""Gmail API client used by the agent's tools.
+
+Returns plain, JSON-friendly data so that results flow cleanly back
+into the Claude Agent SDK as tool output.
+"""
+
+import base64
+import dataclasses
+import email.message
+import email.policy
+import email.utils
+import logging
+
+import google.oauth2.credentials
+import googleapiclient.discovery
+
+LOGGER = logging.getLogger(__name__)
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class Message:
+    """Structured view of a Gmail message the agent reasons about."""
+
+    message_id: str
+    thread_id: str
+    rfc822_message_id: str
+    references: str
+    from_header: str
+    to_header: str
+    subject: str
+    body: str
+    snippet: str
+    thread_replied: bool
+    label_ids: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            'message_id': self.message_id,
+            'thread_id': self.thread_id,
+            'rfc822_message_id': self.rfc822_message_id,
+            'from': self.from_header,
+            'to': self.to_header,
+            'subject': self.subject,
+            'body': self.body,
+            'snippet': self.snippet,
+            'thread_replied': self.thread_replied,
+            'labels': list(self.label_ids),
+        }
+
+
+class GmailClient:
+    """Thin wrapper around the Gmail REST API."""
+
+    def __init__(
+        self,
+        credentials: google.oauth2.credentials.Credentials,
+    ) -> None:
+        self._service = googleapiclient.discovery.build(
+            'gmail',
+            'v1',
+            credentials=credentials,
+            cache_discovery=False,
+        )
+
+    def search(
+        self, query: str, max_results: int = 25
+    ) -> list[dict[str, str]]:
+        """Return ``[{message_id, thread_id}, ...]`` for ``query``."""
+        resp = (
+            self._service.users()
+            .messages()
+            .list(userId='me', q=query, maxResults=max_results)
+            .execute()
+        )
+        out: list[dict[str, str]] = []
+        for item in resp.get('messages', []):
+            out.append(
+                {
+                    'message_id': item['id'],
+                    'thread_id': item['threadId'],
+                }
+            )
+        return out
+
+    def get_message(self, message_id: str) -> Message:
+        """Fetch and normalize a single message."""
+        raw = (
+            self._service.users()
+            .messages()
+            .get(userId='me', id=message_id, format='full')
+            .execute()
+        )
+        headers = _headers_to_dict(raw.get('payload', {}).get('headers', []))
+        body = _extract_text_body(raw.get('payload', {}))
+        thread_replied = self._thread_has_sent(raw['threadId'])
+        return Message(
+            message_id=raw['id'],
+            thread_id=raw['threadId'],
+            rfc822_message_id=headers.get('message-id', ''),
+            references=headers.get('references', ''),
+            from_header=headers.get('from', ''),
+            to_header=headers.get('to', ''),
+            subject=headers.get('subject', ''),
+            body=body,
+            snippet=raw.get('snippet', ''),
+            thread_replied=thread_replied,
+            label_ids=tuple(raw.get('labelIds', [])),
+        )
+
+    def reply(
+        self,
+        *,
+        message_id: str,
+        body: str,
+    ) -> str:
+        """Send a threaded reply. Returns the sent message id."""
+        original = self.get_message(message_id)
+        to_addr = _reply_to_address(original.from_header)
+        subject = original.subject
+        if not subject.lower().startswith('re:'):
+            subject = f'Re: {subject}'
+        references = _build_references(
+            original.references, original.rfc822_message_id
+        )
+        raw_b64 = _encode_reply(
+            to=to_addr,
+            subject=subject,
+            body=body,
+            in_reply_to=original.rfc822_message_id,
+            references=references,
+        )
+        sent = (
+            self._service.users()
+            .messages()
+            .send(
+                userId='me',
+                body={
+                    'raw': raw_b64,
+                    'threadId': original.thread_id,
+                },
+            )
+            .execute()
+        )
+        LOGGER.info(
+            'sent reply %s in thread %s',
+            sent.get('id'),
+            original.thread_id,
+        )
+        return sent['id']
+
+    def archive_thread(self, thread_id: str) -> None:
+        """Remove the INBOX label from the thread."""
+        self._service.users().threads().modify(
+            userId='me',
+            id=thread_id,
+            body={'removeLabelIds': ['INBOX']},
+        ).execute()
+
+    def mark_read(self, message_id: str) -> None:
+        """Remove the UNREAD label from the message."""
+        self._service.users().messages().modify(
+            userId='me',
+            id=message_id,
+            body={'removeLabelIds': ['UNREAD']},
+        ).execute()
+
+    def _thread_has_sent(self, thread_id: str) -> bool:
+        thread = (
+            self._service.users()
+            .threads()
+            .get(userId='me', id=thread_id, format='minimal')
+            .execute()
+        )
+        for msg in thread.get('messages', []):
+            if 'SENT' in msg.get('labelIds', []):
+                return True
+        return False
+
+
+def _headers_to_dict(
+    headers: list[dict[str, str]],
+) -> dict[str, str]:
+    return {h['name'].lower(): h['value'] for h in headers}
+
+
+def _extract_text_body(payload: dict[str, object]) -> str:
+    """Walk a Gmail payload tree for the best text/plain body."""
+    mime_type = payload.get('mimeType', '')
+    body = payload.get('body') or {}
+    data = body.get('data') if isinstance(body, dict) else None
+    if mime_type == 'text/plain' and data:
+        return _decode_b64url(data)
+    parts = payload.get('parts') or []
+    if isinstance(parts, list):
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            text = _extract_text_body(part)
+            if text:
+                return text
+    # Fallback: take any body data we find, even if HTML.
+    if data:
+        return _decode_b64url(data)
+    return ''
+
+
+def _decode_b64url(data: str) -> str:
+    padded = data + '=' * (-len(data) % 4)
+    try:
+        return base64.urlsafe_b64decode(padded).decode(
+            'utf-8', errors='replace'
+        )
+    except ValueError:
+        return ''
+
+
+def _reply_to_address(from_header: str) -> str:
+    """Prefer the bare email address for the To: header."""
+    _name, addr = email.utils.parseaddr(from_header)
+    return addr or from_header
+
+
+def _build_references(existing: str, message_id: str) -> str:
+    parts = [p for p in existing.split() if p]
+    if message_id and message_id not in parts:
+        parts.append(message_id)
+    return ' '.join(parts)
+
+
+def _encode_reply(
+    *,
+    to: str,
+    subject: str,
+    body: str,
+    in_reply_to: str,
+    references: str,
+) -> str:
+    msg = email.message.EmailMessage(policy=email.policy.default)
+    msg['To'] = to
+    msg['Subject'] = subject
+    if in_reply_to:
+        msg['In-Reply-To'] = in_reply_to
+    if references:
+        msg['References'] = references
+    msg.set_content(body)
+    return base64.urlsafe_b64encode(msg.as_bytes()).decode()
