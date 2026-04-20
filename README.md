@@ -31,18 +31,59 @@ replies rather than drafts and can archive threads.
 
 ## Install
 
-Requires Python 3.14 and [`uv`][uv].
+Requires Python 3.14.
+
+### Run without installing (recommended)
+
+[`uvx`][uvx] runs the latest release in an ephemeral environment —
+no virtualenv to manage:
 
 ```bash
-uv sync
+uvx use-agent auth            # one-time OAuth
+uvx use-agent run --dry-run   # classify only
+uvx use-agent run             # full run
 ```
 
-This installs the runtime deps (`claude-agent-sdk`,
-`google-api-python-client`, `google-auth-oauthlib`, `jinja2`,
-`rich`) and the dev tools (`pytest`, `ruff`, `coverage`). The
-console script `use-agent` lands at `.venv/bin/use-agent`.
+Pin a version if you want reproducibility:
 
-[uv]: https://docs.astral.sh/uv/
+```bash
+uvx use-agent@1.0.0b1 run
+```
+
+### Install system-wide with uv
+
+```bash
+uv tool install use-agent
+use-agent auth
+use-agent run
+```
+
+Upgrade later with `uv tool upgrade use-agent`.
+
+### Install with pipx or pip
+
+```bash
+pipx install use-agent
+# or
+pip install --user use-agent
+```
+
+### From source (for development)
+
+```bash
+git clone git@github.com:gmr/use-agent.git
+cd use-agent
+uv sync
+uv run use-agent auth
+uv run use-agent run
+```
+
+`uv sync` installs the runtime deps (`claude-agent-sdk`,
+`google-api-python-client`, `google-auth-oauthlib`, `jinja2`,
+`rich`) plus the dev tools (`pytest`, `ruff`, `coverage`). The
+console script lands at `.venv/bin/use-agent`.
+
+[uvx]: https://docs.astral.sh/uv/guides/tools/
 
 ## Configure
 
@@ -121,7 +162,7 @@ them changes agent behavior without any Python change.
 3. Run the one-time authorization flow:
 
    ```bash
-   uv run use-agent auth
+   use-agent auth           # or: uvx use-agent auth
    ```
 
    This opens a browser, completes the OAuth consent, and stores
@@ -134,26 +175,30 @@ label changes (archive, mark read), and send — nothing destructive.
 
 ## Run
 
+The examples below use bare `use-agent` (what you have after `uvx`,
+`uv tool install`, `pipx`, or `pip install`). From a source checkout
+prefix each command with `uv run`.
+
 ```bash
 # One-shot
-uv run use-agent run                    # process the inbox
-uv run use-agent run --dry-run          # classify but don't reply/archive
-uv run use-agent run --max 10           # examine at most 10 candidates
-uv run use-agent run --query 'is:unread label:followup'  # custom query
+use-agent run                    # process the inbox
+use-agent run --dry-run          # classify but don't reply/archive
+use-agent run --max 10           # examine at most 10 candidates
+use-agent run --query 'is:unread label:followup'  # custom query
 
 # Output format (default is pretty)
-uv run use-agent run --plain            # no ANSI, pipe-delimited table
-uv run use-agent run --json             # stdout is a single JSON document
+use-agent run --plain            # no ANSI, pipe-delimited table
+use-agent run --json             # stdout is a single JSON document
 
 # Daemon mode
-uv run use-agent run --daemon                   # loop forever, every 15m
-uv run use-agent run --daemon --interval 30m    # 30-minute cadence
-uv run use-agent run --daemon --interval 2h     # every two hours
+use-agent run --daemon                   # loop forever, every 15m
+use-agent run --daemon --interval 30m    # 30-minute cadence
+use-agent run --daemon --interval 2h     # every two hours
 # Intervals accept s / m / h / d suffixes, or raw seconds.
 
 # Logging
-uv run use-agent -v run                         # DEBUG level logs to stderr
-uv run use-agent --logfile run.log run --daemon # tee logs to a file
+use-agent -v run                         # DEBUG level logs to stderr
+use-agent --logfile run.log run --daemon # tee logs to a file
 ```
 
 ### Output modes
