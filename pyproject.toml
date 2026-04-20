@@ -48,9 +48,6 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["use_agent"]
 
-[tool.hatch.build.targets.wheel.force-include]
-'use_agent/prompts' = "use_agent/prompts"
-
 [tool.ruff]
 line-length = 79
 target-version = "py314"
