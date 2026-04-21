@@ -13,6 +13,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         'USE_AGENT_CONFIG',
         'USE_AGENT_CREDENTIALS',
         'USE_AGENT_TOKEN',
+        'USE_AGENT_CACHE',
         'XDG_CONFIG_HOME',
     ):
         monkeypatch.delenv(var, raising=False)
@@ -31,6 +32,9 @@ def test_default_paths_use_home(
     assert config.token_path() == (
         tmp_path / '.config' / 'use-agent' / 'token.json'
     )
+    assert config.cache_path() == (
+        tmp_path / '.config' / 'use-agent' / 'cache.json'
+    )
 
 
 def test_xdg_config_home_wins_over_home(
@@ -48,13 +52,16 @@ def test_env_overrides_win_over_xdg(
     cfg = tmp_path / 'custom.toml'
     creds = tmp_path / 'creds.json'
     token = tmp_path / 'token.json'
+    cache_file = tmp_path / 'cache.json'
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'xdg'))
     monkeypatch.setenv('USE_AGENT_CONFIG', str(cfg))
     monkeypatch.setenv('USE_AGENT_CREDENTIALS', str(creds))
     monkeypatch.setenv('USE_AGENT_TOKEN', str(token))
+    monkeypatch.setenv('USE_AGENT_CACHE', str(cache_file))
     assert config.config_file_path() == cfg
     assert config.credentials_path() == creds
     assert config.token_path() == token
+    assert config.cache_path() == cache_file
 
 
 def test_prompt_paths_resolve_to_shipped_files() -> None:

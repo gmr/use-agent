@@ -12,6 +12,9 @@ from use_agent import (
     tools,
 )
 from use_agent import (
+    cache as cache_mod,
+)
+from use_agent import (
     reporter as reporter_mod,
 )
 from use_agent import (
@@ -240,7 +243,8 @@ async def run(
         scopes=config.GMAIL_SCOPES,
     )
     client = gmail.GmailClient(creds)
-    server = tools.build_mcp_server(client)
+    seen = _load_and_prune_cache(client)
+    server = tools.build_mcp_server(client, seen)
     options = claude_agent_sdk.ClaudeAgentOptions(
         system_prompt=_render_system_prompt(settings),
         mcp_servers={tools.MCP_SERVER_NAME: server},
@@ -270,6 +274,7 @@ async def run(
         prompt=prompt, options=options
     ):
         _forward(message, reporter)
+    seen.save()
     return reporter.finish()
 
 
@@ -279,3 +284,27 @@ def _forward(message: object, reporter: reporter_mod.Reporter) -> None:
         for block in message.content:
             if isinstance(block, claude_agent_sdk.TextBlock):
                 reporter.on_text(block.text)
+
+
+def _load_and_prune_cache(
+    client: gmail.GmailClient,
+) -> cache_mod.Cache:
+    """Load the seen-message cache and drop entries no longer in inbox.
+
+    A listing failure (network error, auth hiccup, pagination cap)
+    degrades gracefully: the cache is left untouched rather than
+    wiped, so a transient failure can't force re-investigation of
+    every cached message.
+    """
+    seen = cache_mod.Cache.load(config.cache_path())
+    try:
+        inbox_ids = client.list_inbox_message_ids()
+    except Exception:
+        LOGGER.exception('failed to list inbox; skipping cache prune')
+        inbox_ids = None
+    if inbox_ids is not None:
+        dropped = seen.retain(inbox_ids)
+        if dropped:
+            LOGGER.info('pruned %d cache entries no longer in inbox', dropped)
+    LOGGER.info('seen-message cache: %d entries', len(seen))
+    return seen
