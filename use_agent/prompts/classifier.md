@@ -38,6 +38,12 @@ STRONG signals (2 points each):
   (Google, AWS, Microsoft, Salesforce, etc.). Event marketing by
   business development is almost always cold outreach dressed up
   as hospitality.
+- `unsubscribe_footer`: closes with an informal opt-out line such
+  as "if you don't want to hear from me again, let me know",
+  "reply STOP", "let me know if you'd like me to stop reaching
+  out", or a one-click unsubscribe link. Genuine personal email
+  does not include opt-out language — this is near-definitive for
+  cold outreach.
 
 WEAK signals (1 point each):
 

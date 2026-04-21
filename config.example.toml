@@ -84,6 +84,11 @@ model = "claude-haiku-4-5-20251001"
 # Max candidate messages examined per run.
 max_results = 25
 
+# How far back to consider messages. Appended to the effective
+# query as Gmail's "newer_than:" operator. Format: <N>d, <N>m, or
+# <N>y. Omit or leave empty to evaluate all matching messages.
+# lookback = "7d"
+
 # Override the Gmail search query. If omitted, the query is built
 # from "in:inbox is:unread" plus a -from:<domain> filter for every
 # safelist domain.

@@ -2,6 +2,7 @@
 
 import dataclasses
 import pathlib
+import re
 import tomllib
 import typing
 
@@ -9,6 +10,8 @@ from use_agent import config
 
 DEFAULT_MODEL: str = 'claude-haiku-4-5-20251001'
 DEFAULT_MAX_RESULTS: int = 25
+
+_LOOKBACK_RE: re.Pattern[str] = re.compile(r'^\d+[dmy]$')
 
 
 DEFAULT_VOICE_GUIDELINES: tuple[str, ...] = (
@@ -63,6 +66,7 @@ class Settings:
     model: str
     search_query: str
     max_results: int
+    lookback: str | None
 
     @classmethod
     def load(cls, path: pathlib.Path | None = None) -> 'Settings':  # noqa: UP037
@@ -111,6 +115,12 @@ class Settings:
             'specific_decline',
             DEFAULT_EXAMPLES_SPECIFIC_DECLINE,
         )
+        lookback_raw = search.get('lookback')
+        lookback = (
+            validate_lookback(str(lookback_raw))
+            if lookback_raw not in (None, '')
+            else None
+        )
         query = search.get('query') or _build_query(domains)
         return cls(
             user_name=str(user.get('name', 'the user')),
@@ -125,6 +135,7 @@ class Settings:
             model=str(agent.get('model', DEFAULT_MODEL)),
             search_query=str(query),
             max_results=int(search.get('max_results', DEFAULT_MAX_RESULTS)),
+            lookback=lookback,
         )
 
 
@@ -153,6 +164,17 @@ def _example_list(
     if not isinstance(raw, list):
         raise ValueError(f'[voice.examples] {key} must be a list of strings')
     return tuple(str(item) for item in raw)
+
+
+def validate_lookback(raw: str) -> str:
+    """Validate a Gmail ``newer_than:`` operand like ``7d``/``2m``/``1y``."""
+    value = raw.strip().lower()
+    if not _LOOKBACK_RE.fullmatch(value):
+        raise ValueError(
+            f'invalid lookback {raw!r}; expected <N>d, <N>m, or <N>y '
+            '(e.g. 7d, 2m, 1y)'
+        )
+    return value
 
 
 def _build_query(domains: tuple[str, ...]) -> str:

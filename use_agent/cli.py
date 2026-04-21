@@ -72,6 +72,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help='override maximum candidates to examine',
     )
     run_p.add_argument(
+        '--lookback',
+        default=None,
+        help=(
+            'limit how far back messages are considered, as a Gmail '
+            'newer_than operand: <N>d, <N>m, or <N>y (e.g. 7d, 2m, 1y). '
+            'Appended to the effective query. Overrides [search] lookback '
+            'in config.toml'
+        ),
+    )
+    run_p.add_argument(
         '--dry-run',
         action='store_true',
         help='classify only; do not reply or archive',
@@ -146,6 +156,7 @@ async def _run_once(
         reporter=rpt,
         query=args.query,
         max_results=args.max_results,
+        lookback=args.lookback,
         dry_run=args.dry_run,
     )
 

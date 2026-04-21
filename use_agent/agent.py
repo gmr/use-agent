@@ -228,6 +228,7 @@ async def run(
     reporter: reporter_mod.Reporter,
     query: str | None = None,
     max_results: int | None = None,
+    lookback: str | None = None,
     dry_run: bool = False,
 ) -> int:
     """Execute a single agent pass over the inbox.
@@ -236,6 +237,13 @@ async def run(
     parsed summary, non-zero if the agent produced no summary.
     """
     effective_query = query or settings.search_query
+    effective_lookback = (
+        settings_mod.validate_lookback(lookback)
+        if lookback is not None
+        else settings.lookback
+    )
+    if effective_lookback:
+        effective_query = f'{effective_query} newer_than:{effective_lookback}'
     effective_max = max_results or settings.max_results
     creds = auth.load_credentials(
         credentials_file=config.credentials_path(),

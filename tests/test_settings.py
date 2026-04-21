@@ -194,3 +194,49 @@ def test_build_query_preserves_domain_order() -> None:
 
 def test_build_query_no_domains() -> None:
     assert settings._build_query(()) == 'in:inbox is:unread'
+
+
+def test_lookback_absent_is_none(tmp_path: pathlib.Path) -> None:
+    cfg = _write(
+        tmp_path / 'c.toml',
+        """
+        [user]
+        name = "x"
+        organization = "y"
+        """,
+    )
+    assert settings.Settings.load(cfg).lookback is None
+
+
+def test_lookback_parsed_and_normalized(tmp_path: pathlib.Path) -> None:
+    cfg = _write(
+        tmp_path / 'c.toml',
+        """
+        [user]
+        name = "x"
+        organization = "y"
+
+        [search]
+        lookback = "7D"
+        """,
+    )
+    s = settings.Settings.load(cfg)
+    assert s.lookback == '7d'
+    # search_query is stored without lookback; agent.run composes it.
+    assert s.search_query == 'in:inbox is:unread'
+
+
+def test_lookback_invalid_raises(tmp_path: pathlib.Path) -> None:
+    cfg = _write(
+        tmp_path / 'c.toml',
+        """
+        [user]
+        name = "x"
+        organization = "y"
+
+        [search]
+        lookback = "2w"
+        """,
+    )
+    with pytest.raises(ValueError, match='invalid lookback'):
+        settings.Settings.load(cfg)
