@@ -32,6 +32,12 @@ STRONG signals (2 points each):
   Europe, or South Asia talent as a cost-saving alternative
 - `candidate_pitch`: claims to have pre-vetted candidates or a
   shortlist for {{ organization }} specifically
+- `event_invitation`: invites you to an in-person event, webinar,
+  mixer, breakfast/lunch/dinner, happy hour, or "select group"
+  gathering — especially when co-branded with a major vendor
+  (Google, AWS, Microsoft, Salesforce, etc.). Event marketing by
+  business development is almost always cold outreach dressed up
+  as hospitality.
 
 WEAK signals (1 point each):
 
