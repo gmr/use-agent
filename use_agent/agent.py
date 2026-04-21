@@ -263,7 +263,7 @@ async def run(
         max_results=effective_max,
         dry_run=dry_run,
     )
-    LOGGER.info(
+    LOGGER.debug(
         'starting agent run: query=%r max=%d dry_run=%s model=%s',
         effective_query,
         effective_max,
@@ -305,6 +305,6 @@ def _load_and_prune_cache(
     if inbox_ids is not None:
         dropped = seen.retain(inbox_ids)
         if dropped:
-            LOGGER.info('pruned %d cache entries no longer in inbox', dropped)
-    LOGGER.info('seen-message cache: %d entries', len(seen))
+            LOGGER.debug('pruned %d cache entries no longer in inbox', dropped)
+    LOGGER.debug('seen-message cache: %d entries', len(seen))
     return seen

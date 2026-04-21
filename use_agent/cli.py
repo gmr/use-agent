@@ -159,7 +159,7 @@ async def _run_daemon(
     while True:
         try:
             rc = await _run_once(settings, args)
-            LOGGER.info('iteration finished (rc=%d)', rc)
+            LOGGER.debug('iteration finished (rc=%d)', rc)
         except asyncio.CancelledError:
             raise
         except Exception:

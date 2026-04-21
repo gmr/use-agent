@@ -145,7 +145,7 @@ block, `finish()` returns exit code 1 — treat this as a real error.
 
 | Logger | Level | Purpose |
 |---|---|---|
-| `use_agent.*` | INFO | Lifecycle (run start, daemon tick) |
+| `use_agent.*` | INFO | Notable one-offs (OAuth flow, reply sent); lifecycle (run start, daemon tick, cache stats) is DEBUG |
 | `use_agent.narration` | INFO | Agent's running commentary (buffered text) |
 | `use_agent.tools` | DEBUG | Per-tool-call Gmail operations |
 | `claude_agent_sdk` | WARNING | Pinned; SDK INFO is too chatty |
