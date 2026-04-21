@@ -1,4 +1,4 @@
-"""Streamed text buffering and narration-log stripping."""
+"""Streamed text buffering and narration-log routing."""
 
 import logging
 
@@ -7,71 +7,57 @@ import pytest
 from use_agent import reporter
 
 
-def test_on_text_strips_json_fence_from_narration(
+def test_plain_narration_logs_at_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rpt = reporter.Reporter(mode=reporter.Mode.PRETTY)
+    with caplog.at_level(logging.DEBUG, logger='use_agent.narration'):
+        rpt.on_text('Searching inbox for unread messages.')
+
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelno == logging.INFO
+    assert record.getMessage() == 'Searching inbox for unread messages.'
+
+
+def test_narration_with_json_fence_demotes_to_debug(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     rpt = reporter.Reporter(mode=reporter.Mode.PRETTY)
     text = (
-        'Classifying the message now.\n\n'
-        '```json\n'
-        '{"results": [{"classification": "NOT_COLD_SALES"}]}\n'
-        '```\n\n'
-        'Summary: 1 message processed.'
+        'The search returned no unread emails. Here are the results:\n\n'
+        '```json\n{"results": []}\n```'
     )
-    with caplog.at_level(logging.INFO, logger='use_agent.narration'):
+    with caplog.at_level(logging.DEBUG, logger='use_agent.narration'):
         rpt.on_text(text)
 
-    logged = '\n'.join(r.getMessage() for r in caplog.records)
-    assert '```json' not in logged
-    assert '"results"' not in logged
-    assert '"NOT_COLD_SALES"' not in logged
-    assert 'Classifying the message now.' in logged
-    assert 'Summary: 1 message processed.' in logged
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelno == logging.DEBUG
+    # Text is logged verbatim — no stripping at DEBUG since -v gates it.
+    assert '```json' in record.getMessage()
+    assert '"results"' in record.getMessage()
 
 
-def test_on_text_buffers_full_text_including_fence(
+def test_buffer_keeps_text_verbatim(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     rpt = reporter.Reporter(mode=reporter.Mode.JSON)
     fenced = (
         '```json\n{"results": [{"classification": "NOT_COLD_SALES"}]}\n```'
     )
-    with caplog.at_level(logging.INFO, logger='use_agent.narration'):
+    with caplog.at_level(logging.DEBUG, logger='use_agent.narration'):
         rpt.on_text(fenced)
 
-    # Buffer must still contain the fenced block so finish() can parse
-    # it; stripping happens only at the narration logger.
-    assert '\n'.join(rpt._buffer) == fenced
+    # finish() parses _buffer, so the fence must survive verbatim
+    # regardless of how it got logged.
+    assert rpt._buffer == [fenced]
 
 
-def test_on_text_plain_text_narrates_normally(
+def test_whitespace_only_does_not_log(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     rpt = reporter.Reporter(mode=reporter.Mode.PRETTY)
-    with caplog.at_level(logging.INFO, logger='use_agent.narration'):
-        rpt.on_text('Searching inbox for unread messages.')
-
-    logged = '\n'.join(r.getMessage() for r in caplog.records)
-    assert logged == 'Searching inbox for unread messages.'
-
-
-def test_on_text_whitespace_only_does_not_log(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    rpt = reporter.Reporter(mode=reporter.Mode.PRETTY)
-    with caplog.at_level(logging.INFO, logger='use_agent.narration'):
+    with caplog.at_level(logging.DEBUG, logger='use_agent.narration'):
         rpt.on_text('   \n\n   ')
     assert not caplog.records
-
-
-def test_on_text_fence_only_does_not_log_but_buffers(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    rpt = reporter.Reporter(mode=reporter.Mode.PRETTY)
-    fenced = '```json\n{"results": []}\n```'
-    with caplog.at_level(logging.INFO, logger='use_agent.narration'):
-        rpt.on_text(fenced)
-    # Whole payload was JSON; narration has nothing to say.
-    assert not caplog.records
-    # But the buffer kept it for finish().
-    assert rpt._buffer == [fenced]

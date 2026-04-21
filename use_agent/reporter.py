@@ -78,15 +78,20 @@ class Reporter:
         Attach a stream or file handler to ``use_agent.narration`` if
         you want to see the running commentary live.
 
-        The buffered copy is kept verbatim (so ``finish()`` can still
-        parse the fenced JSON summary), but any ```` ```json ```` blocks
-        are stripped from the narration log — the reporter renders
-        them as a table, so echoing the raw JSON is redundant noise.
+        Chunks that contain a ```` ```json ```` fence — the agent's
+        summary block plus its filler preamble ("Here are the
+        results:") — are logged at DEBUG so they only surface under
+        ``-v``. The reporter renders the summary as a table, so the
+        prose alongside it is duplication.
         """
         self._buffer.append(text)
-        narration = _SUMMARY_FENCE.sub('', text).strip()
-        if narration:
-            NARRATION_LOGGER.info('%s', narration)
+        stripped = text.strip()
+        if not stripped:
+            return
+        if _SUMMARY_FENCE.search(text):
+            NARRATION_LOGGER.debug('%s', stripped)
+        else:
+            NARRATION_LOGGER.info('%s', stripped)
 
     def finish(self) -> int:
         """Render the final summary. Return process exit code."""
