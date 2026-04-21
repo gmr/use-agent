@@ -77,11 +77,16 @@ class Reporter:
         output stays parseable and ``--pretty`` stays uncluttered.
         Attach a stream or file handler to ``use_agent.narration`` if
         you want to see the running commentary live.
+
+        The buffered copy is kept verbatim (so ``finish()`` can still
+        parse the fenced JSON summary), but any ```` ```json ```` blocks
+        are stripped from the narration log — the reporter renders
+        them as a table, so echoing the raw JSON is redundant noise.
         """
         self._buffer.append(text)
-        stripped = text.strip()
-        if stripped:
-            NARRATION_LOGGER.info('%s', stripped)
+        narration = _SUMMARY_FENCE.sub('', text).strip()
+        if narration:
+            NARRATION_LOGGER.info('%s', narration)
 
     def finish(self) -> int:
         """Render the final summary. Return process exit code."""
@@ -111,7 +116,6 @@ class Reporter:
             )
             return
         table = rich.table.Table(
-            title='use-agent summary',
             header_style='bold',
             show_lines=False,
         )
