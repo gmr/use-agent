@@ -10,6 +10,7 @@ import typing
 
 import claude_agent_sdk
 
+from use_agent import cache as cache_mod
 from use_agent import gmail
 
 LOGGER = logging.getLogger(__name__)
@@ -23,8 +24,16 @@ def _text_result(obj: object) -> dict[str, typing.Any]:
     }
 
 
-def build_mcp_server(client: gmail.GmailClient) -> typing.Any:
+def build_mcp_server(
+    client: gmail.GmailClient,
+    seen: cache_mod.Cache,
+) -> typing.Any:
     """Return an SDK MCP server exposing Gmail operations.
+
+    ``seen`` is the persisted cache of message_ids the agent has
+    already investigated. The ``search`` tool filters it out of
+    its results, and ``get_message`` adds to it, so a single message
+    is only ever investigated once while it lives in the inbox.
 
     The server name is :data:`MCP_SERVER_NAME`; each tool is reachable
     from the agent as ``mcp__gmail__<tool>``.
@@ -32,7 +41,9 @@ def build_mcp_server(client: gmail.GmailClient) -> typing.Any:
 
     @claude_agent_sdk.tool(
         'search',
-        'Search the Gmail inbox and return message ids.',
+        'Search the Gmail inbox and return message ids. Messages '
+        'already processed in a prior run are filtered out '
+        'automatically, so the result may be smaller than max_results.',
         {'query': str, 'max_results': int},
     )
     async def gmail_search(
@@ -42,7 +53,11 @@ def build_mcp_server(client: gmail.GmailClient) -> typing.Any:
         max_results = int(args.get('max_results') or 25)
         LOGGER.debug('gmail_search q=%r max=%d', query, max_results)
         results = client.search(query, max_results=max_results)
-        return _text_result(results)
+        filtered = [r for r in results if r['message_id'] not in seen]
+        skipped = len(results) - len(filtered)
+        if skipped:
+            LOGGER.debug('gmail_search: skipped %d cached message(s)', skipped)
+        return _text_result(filtered)
 
     @claude_agent_sdk.tool(
         'get_message',
@@ -54,6 +69,7 @@ def build_mcp_server(client: gmail.GmailClient) -> typing.Any:
         args: dict[str, typing.Any],
     ) -> dict[str, typing.Any]:
         msg = client.get_message(args['message_id'])
+        seen.add(args['message_id'])
         return _text_result(msg.to_dict())
 
     @claude_agent_sdk.tool(

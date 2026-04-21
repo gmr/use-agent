@@ -42,3 +42,11 @@ def config_file_path() -> pathlib.Path:
     if override:
         return pathlib.Path(override)
     return _config_home() / 'config.toml'
+
+
+def cache_path() -> pathlib.Path:
+    """Path to the JSON-backed seen-message cache."""
+    override = os.environ.get('USE_AGENT_CACHE')
+    if override:
+        return pathlib.Path(override)
+    return _config_home() / 'cache.json'

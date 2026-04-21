@@ -16,6 +16,11 @@ import googleapiclient.discovery
 
 LOGGER = logging.getLogger(__name__)
 
+# Guard against huge inboxes: each page costs one API call. 20 pages
+# of 500 covers 10,000 messages — well past any realistic use.
+_INBOX_LIST_PAGE_CAP: int = 20
+_INBOX_LIST_PAGE_SIZE: int = 500
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Message:
@@ -81,6 +86,39 @@ class GmailClient:
                 }
             )
         return out
+
+    def list_inbox_message_ids(self) -> set[str] | None:
+        """Return every message_id currently labeled INBOX.
+
+        Paginates over ``users.messages.list`` with ``q=in:inbox``.
+        Returns ``None`` if pagination exceeds the page cap without
+        finishing — callers should treat that as "unknown" and skip
+        any cache-prune step that would otherwise drop real entries.
+        """
+        ids: set[str] = set()
+        page_token: str | None = None
+        for _ in range(_INBOX_LIST_PAGE_CAP):
+            resp = (
+                self._service.users()
+                .messages()
+                .list(
+                    userId='me',
+                    q='in:inbox',
+                    maxResults=_INBOX_LIST_PAGE_SIZE,
+                    pageToken=page_token,
+                )
+                .execute()
+            )
+            for item in resp.get('messages', []):
+                ids.add(item['id'])
+            page_token = resp.get('nextPageToken')
+            if not page_token:
+                return ids
+        LOGGER.warning(
+            'inbox listing exceeded %d pages; skipping cache prune',
+            _INBOX_LIST_PAGE_CAP,
+        )
+        return None
 
     def get_message(self, message_id: str) -> Message:
         """Fetch and normalize a single message."""
