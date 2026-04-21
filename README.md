@@ -47,7 +47,7 @@ uvx use-agent run             # full run
 Pin a version if you want reproducibility:
 
 ```bash
-uvx use-agent@1.0.0b2 run
+uvx use-agent@1.0.0b3 run
 ```
 
 ### Install system-wide with uv
