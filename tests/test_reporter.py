@@ -61,3 +61,56 @@ def test_whitespace_only_does_not_log(
     with caplog.at_level(logging.DEBUG, logger='use_agent.narration'):
         rpt.on_text('   \n\n   ')
     assert not caplog.records
+
+
+def test_empty_results_logs_info_and_exits_zero(
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rpt = reporter.Reporter(mode=reporter.Mode.PRETTY)
+    rpt.on_text('```json\n{"results": []}\n```')
+    with caplog.at_level(logging.INFO, logger='use_agent.reporter'):
+        rc = rpt.finish()
+
+    assert rc == 0
+    assert any(
+        r.levelno == logging.INFO
+        and r.getMessage() == 'No new unread emails to process'
+        for r in caplog.records
+    )
+    # Nothing to stdout in pretty mode when there are no rows.
+    assert capsys.readouterr().out == ''
+
+
+def test_missing_summary_logs_error_and_exits_one(
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rpt = reporter.Reporter(mode=reporter.Mode.PRETTY)
+    rpt.on_text('No JSON block here, just prose.')
+    with caplog.at_level(logging.ERROR, logger='use_agent.reporter'):
+        rc = rpt.finish()
+
+    assert rc == 1
+    assert any(
+        r.levelno == logging.ERROR and 'no summary' in r.getMessage()
+        for r in caplog.records
+    )
+    assert capsys.readouterr().out == ''
+
+
+def test_plain_mode_empty_results_logs_info(
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rpt = reporter.Reporter(mode=reporter.Mode.PLAIN)
+    rpt.on_text('```json\n{"results": []}\n```')
+    with caplog.at_level(logging.INFO, logger='use_agent.reporter'):
+        rc = rpt.finish()
+
+    assert rc == 0
+    assert any(
+        r.getMessage() == 'No new unread emails to process'
+        for r in caplog.records
+    )
+    assert capsys.readouterr().out == ''

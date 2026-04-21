@@ -115,10 +115,11 @@ class Reporter:
     def _render_pretty_table(
         self, results: list[dict[str, typing.Any]] | None
     ) -> None:
+        if results is None:
+            LOGGER.error('agent produced no summary')
+            return
         if not results:
-            self._stdout.print(
-                '[yellow]No summary emitted by the agent.[/yellow]'
-            )
+            LOGGER.info('No new unread emails to process')
             return
         table = rich.table.Table(
             header_style='bold',
@@ -146,8 +147,11 @@ class Reporter:
     def _render_plain_table(
         self, results: list[dict[str, typing.Any]] | None
     ) -> None:
+        if results is None:
+            LOGGER.error('agent produced no summary')
+            return
         if not results:
-            print('No summary emitted by the agent.')  # noqa: T201
+            LOGGER.info('No new unread emails to process')
             return
         rows = [[str(r.get(c, '')) for c in _COLUMNS] for r in results]
         widths = [
