@@ -7,6 +7,9 @@ into an in-process MCP server via ``create_sdk_mcp_server``.
 import json
 import logging
 import typing
+import urllib.error
+import urllib.parse
+import urllib.request
 
 import claude_agent_sdk
 
@@ -17,11 +20,139 @@ LOGGER = logging.getLogger(__name__)
 
 MCP_SERVER_NAME = 'gmail'
 
+# Don't let a stalled unsubscribe endpoint hang the whole run.
+_UNSUB_HTTP_TIMEOUT: float = 10.0
+_UNSUB_USER_AGENT: str = 'use-agent-unsubscribe/1.0'
+
+_METHOD_ONE_CLICK = 'one_click_post'
+_METHOD_HTTP_GET = 'http_get'
+_METHOD_MAILTO = 'mailto'
+_METHOD_NONE = 'none'
+
 
 def _text_result(obj: object) -> dict[str, typing.Any]:
     return {
         'content': [{'type': 'text', 'text': json.dumps(obj, default=str)}]
     }
+
+
+def _pick_unsubscribe_action(
+    list_unsubscribe: str, list_unsubscribe_post: str
+) -> tuple[str, object]:
+    """Return ``(method, target)`` for the best available endpoint."""
+    targets = gmail.unsubscribe_targets(
+        list_unsubscribe, list_unsubscribe_post
+    )
+    http_urls = typing.cast('list[str]', targets['http_urls'])
+    mailtos = typing.cast('list[dict[str, str]]', targets['mailtos'])
+    https = [u for u in http_urls if u.lower().startswith('https://')]
+    if targets['one_click'] and https:
+        return _METHOD_ONE_CLICK, https[0]
+    if https:
+        return _METHOD_HTTP_GET, https[0]
+    if mailtos:
+        return _METHOD_MAILTO, mailtos[0]
+    return _METHOD_NONE, None
+
+
+def _do_unsubscribe_and_trash(
+    client: gmail.GmailClient,
+    *,
+    thread_id: str,
+    list_unsubscribe: str,
+    list_unsubscribe_post: str,
+    dry_run: bool,
+) -> dict[str, typing.Any]:
+    method, target = _pick_unsubscribe_action(
+        list_unsubscribe, list_unsubscribe_post
+    )
+    if dry_run:
+        return {
+            'dry_run': True,
+            'method': method,
+            'detail': _describe_planned(method, target),
+            'trashed': False,
+        }
+    ok, detail = _perform(client, method, target)
+    client.trash_thread(thread_id)
+    return {
+        'dry_run': False,
+        'method': method,
+        'ok': ok,
+        'detail': detail,
+        'trashed': True,
+    }
+
+
+def _describe_planned(method: str, target: object) -> str:
+    if method == _METHOD_ONE_CLICK:
+        return f'would POST {target}'
+    if method == _METHOD_HTTP_GET:
+        return f'would GET {target}'
+    if method == _METHOD_MAILTO:
+        return f'would mail {typing.cast("dict[str, str]", target)["address"]}'
+    return 'no List-Unsubscribe header'
+
+
+def _perform(
+    client: gmail.GmailClient, method: str, target: object
+) -> tuple[bool, str]:
+    if method == _METHOD_ONE_CLICK:
+        return _http_unsubscribe(typing.cast('str', target), one_click=True)
+    if method == _METHOD_HTTP_GET:
+        return _http_unsubscribe(typing.cast('str', target), one_click=False)
+    if method == _METHOD_MAILTO:
+        entry = typing.cast('dict[str, str]', target)
+        try:
+            sent_id = client.send_unsubscribe_mail(
+                to=entry['address'],
+                subject=entry['subject'],
+                body=entry['body'],
+            )
+        except Exception as exc:  # noqa: BLE001 - report, don't fail run
+            return False, f'{type(exc).__name__}: {exc}'
+        return True, f'sent {sent_id}'
+    return False, 'no List-Unsubscribe header'
+
+
+def _http_unsubscribe(url: str, *, one_click: bool) -> tuple[bool, str]:
+    """Hit an HTTPS unsubscribe endpoint.
+
+    For RFC 8058 one-click we POST ``List-Unsubscribe=One-Click`` as a
+    form body. Otherwise we issue a GET. 2xx/3xx is treated as
+    success; anything else is surfaced so the agent can report it.
+    """
+    try:
+        if one_click:
+            data = urllib.parse.urlencode(
+                {'List-Unsubscribe': 'One-Click'}
+            ).encode('ascii')
+            req = urllib.request.Request(  # noqa: S310 - scheme checked below
+                url,
+                data=data,
+                method='POST',
+                headers={
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'User-Agent': _UNSUB_USER_AGENT,
+                },
+            )
+        else:
+            req = urllib.request.Request(  # noqa: S310 - scheme checked below
+                url,
+                method='GET',
+                headers={'User-Agent': _UNSUB_USER_AGENT},
+            )
+        if req.type not in ('http', 'https'):
+            return False, f'refused non-http(s) scheme: {req.type}'
+        with urllib.request.urlopen(  # noqa: S310 - scheme validated above
+            req, timeout=_UNSUB_HTTP_TIMEOUT
+        ) as resp:
+            status = getattr(resp, 'status', 0)
+            return (200 <= status < 400), f'HTTP {status}'
+    except urllib.error.HTTPError as exc:
+        return False, f'HTTP {exc.code}'
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return False, f'{type(exc).__name__}: {exc}'
 
 
 def build_mcp_server(
@@ -101,11 +232,63 @@ def build_mcp_server(
         client.mark_read(args['message_id'])
         return _text_result({'archived': True, 'marked_read': True})
 
+    @claude_agent_sdk.tool(
+        'unsubscribe_and_trash',
+        (
+            "Honor the message's List-Unsubscribe header, then move "
+            'the thread to Trash. Pass the `list_unsubscribe` and '
+            '`list_unsubscribe_post` header values returned from '
+            '`get_message`. Prefers RFC 8058 one-click (HTTPS POST); '
+            'falls back to HTTPS GET; falls back to sending a mailto '
+            'unsubscribe. Set dry_run=true to log what would happen '
+            'without touching the network or mailbox.'
+        ),
+        {
+            'thread_id': str,
+            'list_unsubscribe': str,
+            'list_unsubscribe_post': str,
+            'dry_run': bool,
+        },
+    )
+    async def gmail_unsubscribe_and_trash(
+        args: dict[str, typing.Any],
+    ) -> dict[str, typing.Any]:
+        return _text_result(
+            _do_unsubscribe_and_trash(
+                client,
+                thread_id=args['thread_id'],
+                list_unsubscribe=args.get('list_unsubscribe', ''),
+                list_unsubscribe_post=args.get('list_unsubscribe_post', ''),
+                dry_run=bool(args.get('dry_run', False)),
+            )
+        )
+
+    @claude_agent_sdk.tool(
+        'trash',
+        'Move a Gmail thread to Trash without attempting to '
+        'unsubscribe. Use for bulk marketing that lacks a '
+        'List-Unsubscribe header and only exposes an in-body '
+        'unsubscribe link (clicking would validate the address). '
+        'Set dry_run=true to log what would happen.',
+        {'thread_id': str, 'dry_run': bool},
+    )
+    async def gmail_trash(
+        args: dict[str, typing.Any],
+    ) -> dict[str, typing.Any]:
+        thread_id = args['thread_id']
+        dry_run = bool(args.get('dry_run', False))
+        if dry_run:
+            return _text_result({'dry_run': True, 'trashed': False})
+        client.trash_thread(thread_id)
+        return _text_result({'dry_run': False, 'trashed': True})
+
     tools = [
         gmail_search,
         gmail_get_message,
         gmail_reply,
         gmail_archive_and_mark_read,
+        gmail_unsubscribe_and_trash,
+        gmail_trash,
     ]
     return claude_agent_sdk.create_sdk_mcp_server(
         name=MCP_SERVER_NAME,
@@ -119,4 +302,6 @@ ALLOWED_TOOLS: tuple[str, ...] = (
     f'mcp__{MCP_SERVER_NAME}__get_message',
     f'mcp__{MCP_SERVER_NAME}__reply',
     f'mcp__{MCP_SERVER_NAME}__archive_and_mark_read',
+    f'mcp__{MCP_SERVER_NAME}__unsubscribe_and_trash',
+    f'mcp__{MCP_SERVER_NAME}__trash',
 )

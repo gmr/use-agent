@@ -5,9 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 `use-agent` is a Claude Agent that triages a Gmail inbox for
-unsolicited sales email, replies in the user's voice, and archives
-the thread. It's built on the Claude Agent SDK; Gmail API operations
-are exposed as tools via an in-process SDK MCP server.
+unsolicited sales email and bulk marketing. It replies to cold
+sales pitches in the user's voice and archives them; for bulk
+marketing it honors the RFC 8058 one-click unsubscribe and
+Trashes the thread. It's built on the Claude Agent SDK; Gmail API
+operations are exposed as tools via an in-process SDK MCP server.
 
 Python 3.14, uv, hatchling + hatch-vcs, ruff. Runtime deps:
 `claude-agent-sdk`, `google-api-python-client`,
@@ -64,10 +66,17 @@ Key module responsibilities:
 - `gmail.GmailClient` is the only module that touches the Gmail REST
   API. It returns frozen `Message` dataclasses so tool output stays
   JSON-friendly.
-- `tools.build_mcp_server(client)` wraps four `@claude_agent_sdk.tool`
-  closures (`search`, `get_message`, `reply`, `archive_and_mark_read`)
-  over a `GmailClient` and returns an SDK MCP server. The closure
-  approach lets the tools share state without a module-global client.
+- `tools.build_mcp_server(client)` wraps six `@claude_agent_sdk.tool`
+  closures (`search`, `get_message`, `reply`, `archive_and_mark_read`,
+  `unsubscribe_and_trash`, `trash`) over a `GmailClient` and returns
+  an SDK MCP server. The closure approach lets the tools share state
+  without a module-global client.
+- The `unsubscribe_and_trash` tool takes the `list_unsubscribe` and
+  `list_unsubscribe_post` header strings as arguments (not just the
+  message_id) so it doesn't re-fetch the message. Headers come from
+  the preceding `get_message` call. The tool chooses between RFC 8058
+  one-click HTTPS POST, HTTPS GET, and mailto based on what the
+  headers expose (see `tools._pick_unsubscribe_action`).
 - `agent.run()` is the orchestration entry point: renders the system
   prompt, builds the tool server, configures `ClaudeAgentOptions`,
   streams responses into the `Reporter`, and returns an exit code.
@@ -88,12 +97,16 @@ Key module responsibilities:
 `use_agent/prompts/classifier.md` and `reply.md` are Jinja2 templates
 rendered at startup. Context injected by `agent._render_context`:
 `user_name`, `organization`, `safelist_domains`, `vendor_names`,
-`voice_guidelines`, `reply_footer`, plus two pre-rendered strings
-(`voice_block`, `footer_block`, `footer_instruction`). The
-pre-rendered strings exist because the repo's pre-commit Markdown
-formatter strips blank lines inside `{% if %}` blocks — avoid Jinja
-control flow in prompt Markdown; pre-render composite blocks in
-Python and inject them as single `{{ ... }}` substitutions.
+`voice_guidelines`, `newsletter_keep_domains`,
+`newsletter_keep_list_ids`, `reply_footer`, plus pre-rendered strings
+(`voice_block`, `footer_block`, `footer_instruction`,
+`hard_remove_examples`, etc.). `newsletter_keep_block` is rendered
+separately in `_render_system_prompt` because only the top-level
+system prompt template uses it. The pre-rendered strings exist
+because the repo's pre-commit Markdown formatter strips blank lines
+inside `{% if %}` blocks — avoid Jinja control flow in prompt
+Markdown; pre-render composite blocks in Python and inject them as
+single `{{ ... }}` substitutions.
 
 `reply_footer` is itself a Jinja string (may reference `{{ user_name
 }}` etc.) and is rendered once in `_render_context` before being
@@ -107,6 +120,8 @@ Most behavior tweaks belong in `config.toml` or the prompt Markdown:
 - Change reply voice / add a template → edit `prompts/reply.md`
 - Add a vendor exemption → `[vendors] names` in `config.toml`
 - Add a safelisted domain → `[safelist] domains` in `config.toml`
+- Keep a bulk sender (community list, opted-in newsletter) →
+  `[newsletters] keep_domains` / `keep_list_ids` in `config.toml`
 - Change footer text / disable footer → `[voice] footer` (or `""`)
 - Change model → `[agent] model`
 
@@ -132,6 +147,37 @@ three are correct: `In-Reply-To: <original Message-ID>`,
 all three from the fetched original. Don't regress this — dropping
 `threadId` or the headers silently demotes replies into new threads.
 
+### Unsubscribing (RFC 2369 / RFC 8058)
+
+`gmail.unsubscribe_targets(list_unsubscribe, list_unsubscribe_post)`
+parses the raw `List-Unsubscribe` header into `{http_urls, mailtos,
+one_click}`. The splitter (`_split_list_unsubscribe`) respects
+angle-bracket nesting because mailto URIs may contain literal
+commas in a `body=` parameter — a plain `split(',')` breaks those.
+
+The `unsubscribe_and_trash` tool calls `_pick_unsubscribe_action`,
+which returns `(method, target)`:
+
+1. `one_click_post` — RFC 8058: POST `List-Unsubscribe=One-Click`
+   as a form body to the HTTPS URI. This is what Gmail and Apple
+   Mail use when the user clicks the native "Unsubscribe" button.
+2. `http_get` — GET the HTTPS URI.
+3. `mailto` — send a standalone (non-threaded) email via
+   `GmailClient.send_unsubscribe_mail` to the address in the
+   mailto URI, using its `subject=` / `body=` parameters.
+4. `none` — no endpoint available; Trash only.
+
+Both the HTTP request (`_http_unsubscribe`) and the mailto send are
+sync-blocking. They run inside the async MCP tool handler, which
+matches the existing googleapiclient pattern throughout `tools.py`.
+The HTTP request has a 10-second timeout (`_UNSUB_HTTP_TIMEOUT`) so
+a stalled endpoint can't hang the whole run.
+
+In-body HTML unsubscribe links are NEVER clicked — clicking
+validates the address to shady senders who already ignored the
+RFC. Messages with no `List-Unsubscribe` header get
+`response_mode=delete` and go straight to Trash.
+
 ### Output contract
 
 The agent is prompted to emit exactly one fenced ` ```json ` block
@@ -147,7 +193,7 @@ block, `finish()` returns exit code 1 — treat this as a real error.
 |---|---|---|
 | `use_agent.*` | INFO | Notable one-offs (OAuth flow, reply sent); lifecycle (run start, daemon tick, cache stats) is DEBUG |
 | `use_agent.narration` | INFO | Agent's running commentary (buffered text) |
-| `use_agent.tools` | DEBUG | Per-tool-call Gmail operations |
+| `use_agent.tools` | DEBUG | Per-tool-call Gmail operations (search, get, reply, archive, unsubscribe, trash) |
 | `claude_agent_sdk` | WARNING | Pinned; SDK INFO is too chatty |
 
 All handlers write to stderr (plus the `--logfile` target when set)

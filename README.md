@@ -1,7 +1,9 @@
 # use-agent
 
-A Claude Agent that scans a Gmail inbox for unsolicited sales email,
-replies in the user's voice, and archives the thread.
+A Claude Agent that scans a Gmail inbox for unsolicited sales email
+and bulk marketing, then takes the right action for each — a terse
+reply for cold sales pitches, an RFC 8058 one-click unsubscribe for
+newsletters.
 
 Built on the [Claude Agent SDK][sdk]. Gmail API operations are
 exposed to the agent as tools via an in-process MCP server. All
@@ -17,17 +19,24 @@ repo itself contains no identifying information.
 2. Fetches each candidate and checks whether the thread already has
    a sent reply.
 3. Classifies each message using the rules in
-   [`use_agent/prompts/classifier.md`](use_agent/prompts/classifier.md).
-4. For every `COLD_SALES` hit, generates a reply using the rules in
-   [`use_agent/prompts/reply.md`](use_agent/prompts/reply.md).
-5. Sends the reply as a proper threaded reply (`In-Reply-To` and
-   `References` headers set from the original message, same
-   `threadId` passed to the send call), marks the original as read,
-   and archives the thread.
-6. Emits a summary of everything examined.
+   [`use_agent/prompts/classifier.md`](use_agent/prompts/classifier.md)
+   as one of `COLD_SALES`, `BULK_MARKETING`, or `NOT_COLD_SALES`.
+4. Takes the action matching the classification:
+   - **`COLD_SALES`** — generate a reply using the rules in
+     [`use_agent/prompts/reply.md`](use_agent/prompts/reply.md),
+     send it as a threaded reply, mark the original read, archive.
+   - **`BULK_MARKETING`** with a `List-Unsubscribe` header — honor
+     it (RFC 8058 one-click HTTPS POST preferred, falling back to
+     HTTPS GET or a mailto unsubscribe) and Trash the thread.
+   - **`BULK_MARKETING`** without a `List-Unsubscribe` header —
+     Trash the thread without clicking any in-body unsubscribe link
+     (clicking validates the address to a sender that already
+     ignored the spec).
+   - **`NOT_COLD_SALES`** — skip.
+5. Emits a summary of everything examined.
 
 Unlike the Claude Cowork Gmail connector, this agent sends actual
-replies rather than drafts and can archive threads.
+replies rather than drafts and can act on the mailbox.
 
 ## Install
 
@@ -107,6 +116,15 @@ domains = ["example.com", "example.net"]
 # billing / renewal / account management. Vendor reps pitching
 # upsells still get flagged.
 names = ["AWS", "GitHub"]
+
+[newsletters]
+# Bulk senders to LEAVE ALONE — community mailing lists, vendor
+# product updates, or anything else you opted into. Matched first
+# by List-Id (precise), then sender domain (coarse). Leave both
+# empty to unsubscribe from every bulk list not otherwise
+# safelisted.
+keep_domains = []
+keep_list_ids = ["pgsql-general.lists.postgresql.org"]
 
 [voice]
 # Rendered as a bulleted list under "## Voice Guidelines" in the
@@ -253,32 +271,77 @@ constructed with:
 - `settings=None` — no specific settings file
 - `skills=None` — no auto-discovered skills
 - `mcp_servers={'gmail': <our server>}` — only our Gmail MCP server
-- `allowed_tools=[...]` — only the four Gmail tools we expose
+- `allowed_tools=[...]` — only the six Gmail tools we expose
+  (`search`, `get_message`, `reply`, `archive_and_mark_read`,
+  `unsubscribe_and_trash`, `trash`)
 
 Nothing from your Claude Code dev environment — custom agents,
 plugins, MCP servers, hooks, skills — can leak into this agent run.
 
 ## How the agent decides
 
-Classification is rule-based, not sentiment-based. Each message
-accumulates points from STRONG (2pt) and WEAK (1pt) signals — meeting
-CTA, intro formulas, outreach-tooling domains, flattery hooks, fake
-`Re:` threads, false premises about the org, etc. A total score of
-`>= 3` means `COLD_SALES`. Vendor billing, newsletters, transactional
-notifications, threads that already have a sent reply, and senders
-from safelisted domains are hard-exempt regardless of score.
+Classification is rule-based, not sentiment-based.
 
-Replies are one of four modes:
+**`COLD_SALES`** — personalized sales outreach. Each message
+accumulates points from STRONG (2pt) and WEAK (1pt) signals —
+meeting CTA, intro formulas, outreach-tooling domains, flattery
+hooks, fake `Re:` threads, false premises about the org, etc. A
+total score of `>= 3` means `COLD_SALES`. Vendor billing, senders
+from safelisted domains, and threads that already have a sent
+reply are hard-exempt regardless of score.
+
+**`BULK_MARKETING`** — unsolicited mass broadcast (newsletters,
+product promos, demand-gen nurture). The decisive signal is the
+presence of both `List-Unsubscribe` and
+`List-Unsubscribe-Post: One-Click` — real personal email never
+carries those. ESP infrastructure (HubSpot, Marketo, Sendinblue,
+emBlue, SendGrid, Mailchimp, etc.) and opaque `List-Id` values
+raise confidence. Matching the `[newsletters] keep_domains` or
+`keep_list_ids` in `config.toml` exempts the message, as do
+community mailing lists with organization-owned `List-Id`s.
+
+Reply modes for `COLD_SALES`:
 
 - `hard_remove` — the default. A curt "Not interested, please remove."
 - `hard_remove_with_correction` — when the sender got a fact about
   the org wrong; lead with a brief factual correction, then remove.
 - `specific_decline` — reserved for reps of current vendors.
-- `none` — not cold sales; skip.
+
+Action modes for `BULK_MARKETING`:
+
+- `unsubscribe_and_delete` — `List-Unsubscribe` is present; honor
+  it (see "How unsubscribes work" below), then Trash the thread.
+- `delete` — no `List-Unsubscribe` header; Trash without clicking
+  any in-body unsubscribe link.
 
 Every reply optionally ends with the `footer` from `config.toml`,
 which is itself a Jinja string (so it can interpolate `{{
 user_name }}` etc.).
+
+## How unsubscribes work
+
+For `BULK_MARKETING` with a `List-Unsubscribe` header, the
+`unsubscribe_and_trash` tool picks the best available endpoint in
+this order:
+
+1. **RFC 8058 one-click HTTPS POST** — when
+   `List-Unsubscribe-Post: List-Unsubscribe=One-Click` is set and
+   an HTTPS URI is present. A body-less POST to the URI with
+   `List-Unsubscribe=One-Click` as a form field. This is how
+   Gmail and Apple Mail's built-in "Unsubscribe" button works.
+2. **HTTPS GET** — when only an HTTPS URI is present, no
+   one-click declaration.
+3. **Mailto unsubscribe** — a standalone email to the `mailto:`
+   URI with the subject/body it requests.
+
+Only after the chosen action completes does the thread move to
+Trash (recoverable for ~30 days). `--dry-run` skips both the HTTP
+call and the Trash move but still logs the method that would have
+been used.
+
+In-body HTML unsubscribe links are NEVER clicked. Clicking a shady
+sender's in-body link validates the address and typically
+increases spam rather than stopping it.
 
 ## How replies are threaded
 

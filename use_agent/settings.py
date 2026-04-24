@@ -63,6 +63,8 @@ class Settings:
     examples_hard_remove: tuple[str, ...]
     examples_hard_remove_with_correction: tuple[str, ...]
     examples_specific_decline: tuple[str, ...]
+    newsletter_keep_domains: tuple[str, ...]
+    newsletter_keep_list_ids: tuple[str, ...]
     model: str
     search_query: str
     max_results: int
@@ -90,8 +92,15 @@ class Settings:
         voice = _section(data, 'voice')
         agent = _section(data, 'agent')
         search = _section(data, 'search')
+        newsletters = _section_opt(data, 'newsletters')
         domains = tuple(
             str(d).strip().lower() for d in safelist.get('domains', ())
+        )
+        keep_domains = tuple(
+            str(d).strip().lower() for d in newsletters.get('keep_domains', ())
+        )
+        keep_list_ids = tuple(
+            str(i).strip() for i in newsletters.get('keep_list_ids', ())
         )
         guidelines = (
             tuple(str(g) for g in voice.get('guidelines', ()))
@@ -132,6 +141,8 @@ class Settings:
             examples_hard_remove=ex_hard,
             examples_hard_remove_with_correction=ex_correct,
             examples_specific_decline=ex_specific,
+            newsletter_keep_domains=keep_domains,
+            newsletter_keep_list_ids=keep_list_ids,
             model=str(agent.get('model', DEFAULT_MODEL)),
             search_query=str(query),
             max_results=int(search.get('max_results', DEFAULT_MAX_RESULTS)),

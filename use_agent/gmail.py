@@ -10,6 +10,7 @@ import email.message
 import email.policy
 import email.utils
 import logging
+import urllib.parse
 
 import google.oauth2.credentials
 import googleapiclient.discovery
@@ -37,6 +38,9 @@ class Message:
     snippet: str
     thread_replied: bool
     label_ids: tuple[str, ...]
+    list_unsubscribe: str
+    list_unsubscribe_post: str
+    list_id: str
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -50,7 +54,86 @@ class Message:
             'snippet': self.snippet,
             'thread_replied': self.thread_replied,
             'labels': list(self.label_ids),
+            'list_unsubscribe': self.list_unsubscribe,
+            'list_unsubscribe_post': self.list_unsubscribe_post,
+            'list_id': self.list_id,
         }
+
+
+def unsubscribe_targets(
+    list_unsubscribe: str,
+    list_unsubscribe_post: str,
+) -> dict[str, object]:
+    """Parse ``List-Unsubscribe`` into HTTP URLs and mailto entries.
+
+    ``one_click`` is true when the sender declared RFC 8058 one-click
+    (``List-Unsubscribe-Post: List-Unsubscribe=One-Click``) AND at
+    least one HTTPS URI is present.
+    """
+    http_urls: list[str] = []
+    mailtos: list[dict[str, str]] = []
+    for raw in _split_list_unsubscribe(list_unsubscribe):
+        uri = raw.strip().strip('<>').strip()
+        if not uri:
+            continue
+        if uri.lower().startswith('mailto:'):
+            mailtos.append(_parse_mailto(uri))
+        elif uri.lower().startswith(('http://', 'https://')):
+            http_urls.append(uri)
+    one_click = 'one-click' in list_unsubscribe_post.lower() and any(
+        u.lower().startswith('https://') for u in http_urls
+    )
+    return {
+        'http_urls': http_urls,
+        'mailtos': mailtos,
+        'one_click': one_click,
+    }
+
+
+def _split_list_unsubscribe(header: str) -> list[str]:
+    """Split a ``List-Unsubscribe`` value into its bracketed entries.
+
+    The header is a comma-separated list of ``<uri>`` tokens, but
+    mailto URIs may contain literal commas inside a ``body=`` or
+    ``subject=`` parameter. Splitting on angle brackets avoids that.
+    """
+    parts: list[str] = []
+    depth = 0
+    buf: list[str] = []
+    for ch in header:
+        if ch == '<':
+            depth += 1
+            buf.append(ch)
+        elif ch == '>':
+            depth -= 1
+            buf.append(ch)
+            if depth <= 0:
+                parts.append(''.join(buf))
+                buf = []
+        elif ch == ',' and depth == 0:
+            if buf:
+                parts.append(''.join(buf))
+                buf = []
+        else:
+            buf.append(ch)
+    tail = ''.join(buf).strip()
+    if tail:
+        parts.append(tail)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _parse_mailto(uri: str) -> dict[str, str]:
+    """Return ``{address, subject, body}`` for a ``mailto:`` URI."""
+    parsed = urllib.parse.urlparse(uri)
+    address = parsed.path
+    params = urllib.parse.parse_qs(parsed.query)
+    subject = params.get('subject', [''])[0]
+    body = params.get('body', [''])[0]
+    return {
+        'address': address,
+        'subject': subject or 'unsubscribe',
+        'body': body or 'unsubscribe',
+    }
 
 
 class GmailClient:
@@ -143,6 +226,9 @@ class GmailClient:
             snippet=raw.get('snippet', ''),
             thread_replied=thread_replied,
             label_ids=tuple(raw.get('labelIds', [])),
+            list_unsubscribe=headers.get('list-unsubscribe', ''),
+            list_unsubscribe_post=headers.get('list-unsubscribe-post', ''),
+            list_id=headers.get('list-id', ''),
         )
 
     def reply(
@@ -194,6 +280,13 @@ class GmailClient:
             body={'removeLabelIds': ['INBOX']},
         ).execute()
 
+    def trash_thread(self, thread_id: str) -> None:
+        """Move the thread to Trash (recoverable for ~30 days)."""
+        self._service.users().threads().trash(
+            userId='me',
+            id=thread_id,
+        ).execute()
+
     def mark_read(self, message_id: str) -> None:
         """Remove the UNREAD label from the message."""
         self._service.users().messages().modify(
@@ -201,6 +294,31 @@ class GmailClient:
             id=message_id,
             body={'removeLabelIds': ['UNREAD']},
         ).execute()
+
+    def send_unsubscribe_mail(
+        self, *, to: str, subject: str, body: str
+    ) -> str:
+        """Send a standalone unsubscribe email.
+
+        Used for the ``mailto:`` form of ``List-Unsubscribe``. Not a
+        threaded reply — the destination is a bounce-style address
+        that should be matched by its envelope To: alone.
+        """
+        raw_b64 = _encode_reply(
+            to=to,
+            subject=subject,
+            body=body,
+            in_reply_to='',
+            references='',
+        )
+        sent = (
+            self._service.users()
+            .messages()
+            .send(userId='me', body={'raw': raw_b64})
+            .execute()
+        )
+        LOGGER.info('sent unsubscribe mail %s to %s', sent.get('id'), to)
+        return sent['id']
 
     def _thread_has_sent(self, thread_id: str) -> bool:
         thread = (

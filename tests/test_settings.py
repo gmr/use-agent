@@ -42,6 +42,8 @@ def test_minimal_config_fills_defaults(tmp_path: pathlib.Path) -> None:
     assert s.examples_specific_decline == (
         settings.DEFAULT_EXAMPLES_SPECIFIC_DECLINE
     )
+    assert s.newsletter_keep_domains == ()
+    assert s.newsletter_keep_list_ids == ()
     assert s.model == settings.DEFAULT_MODEL
     assert s.max_results == settings.DEFAULT_MAX_RESULTS
     # No safelist → query has just the baseline operators.
@@ -224,6 +226,28 @@ def test_lookback_parsed_and_normalized(tmp_path: pathlib.Path) -> None:
     assert s.lookback == '7d'
     # search_query is stored without lookback; agent.run composes it.
     assert s.search_query == 'in:inbox is:unread'
+
+
+def test_newsletter_keep_lists_loaded(tmp_path: pathlib.Path) -> None:
+    cfg = _write(
+        tmp_path / 'c.toml',
+        """
+        [user]
+        name = "x"
+        organization = "y"
+
+        [newsletters]
+        keep_domains = ["GitHub.com", "lwn.net"]
+        keep_list_ids = ["pgsql-general.lists.postgresql.org"]
+        """,
+    )
+    s = settings.Settings.load(cfg)
+    # keep_domains are lowercased to match how senders are compared.
+    assert s.newsletter_keep_domains == ('github.com', 'lwn.net')
+    # List-Id values are case-sensitive in practice; left as-is.
+    assert s.newsletter_keep_list_ids == (
+        'pgsql-general.lists.postgresql.org',
+    )
 
 
 def test_lookback_invalid_raises(tmp_path: pathlib.Path) -> None:

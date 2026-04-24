@@ -1,6 +1,11 @@
-# Cold Sales Classifier
+# Email Triage Classifier
 
-Apply this classification to each candidate email.
+Apply one of three classifications to each candidate email:
+
+- `COLD_SALES` — unsolicited, personalized outreach trying to sell
+- `BULK_MARKETING` — unsolicited mass-broadcast newsletter / promo
+- `NOT_COLD_SALES` — anything else (catch-all; also used for opt-in
+  community lists and newsletters the user wants to keep)
 
 ## Input Fields
 
@@ -8,6 +13,11 @@ Apply this classification to each candidate email.
 - `subject`: email subject line
 - `body`: email body text (first message in thread only)
 - `thread_replied`: boolean, true if thread already has a SENT message
+- `list_unsubscribe`: raw ``List-Unsubscribe`` header, or empty
+- `list_unsubscribe_post`: raw ``List-Unsubscribe-Post`` header
+- `list_id`: raw ``List-Id`` header, or empty
+
+# Part 1: Cold Sales Classification
 
 ## Classification Rules
 
@@ -79,6 +89,91 @@ Classify as `COLD_SALES` if total score >= 3.
 - Sender domain is one of the safelisted internal domains ({% for d in safelist_domains %}`{{ d }}`{% if not loop.last %}, {% endif %}{% endfor %})
 {% endif %}
 
+# Part 2: Bulk Marketing Classification
+
+Apply this AFTER cold-sales scoring. If the message already scored
+`COLD_SALES`, do not re-classify it — personalized outreach beats
+bulk broadcast.
+
+Classify as `BULK_MARKETING` if the message is an unsolicited mass
+broadcast (newsletter, product promo, demand-gen email,
+thought-leadership nurture) whose primary purpose is marketing,
+and which the user did not affirmatively opt into.
+
+### Decisive rule
+
+If BOTH `list_unsubscribe` is present AND `list_unsubscribe_post`
+contains `One-Click`, the message is a bulk broadcast. Real 1:1
+personal email NEVER carries these headers — they exist only to
+satisfy Gmail/Yahoo bulk-sender requirements. Default to
+`BULK_MARKETING` unless one of the exceptions below applies.
+
+A `Feedback-ID` header (required for Gmail Postmaster reporting on
+bulk senders) is similarly near-definitive on its own.
+
+### Supporting signals (used for confidence and edge cases)
+
+- `list_unsubscribe` header is present (even without `One-Click`)
+- ESP infrastructure in `Received` / `Return-Path` / sender domain:
+  `*.hubspotemail.net`, `*.mailin.fr`, `*.mktomail.com`,
+  `*.marketo.org`, `*.sendibm1.com`, `*.sendinblue.*`,
+  `*.sendgrid.*`, `*.mailchimp.*`, `*.constantcontact.*`,
+  `*.embluemail.com`, `*.embluejet.com`, `*.embluerpg.com`,
+  `*.mailgun.*`, `*.postmarkapp.com`, `*.amazonses.com`
+- `list_id` is opaque / base64 / ends in ESP-owned infrastructure
+  (marketing campaign) rather than a stable organization-owned id
+- Body has marketing CTAs: "Download now", "Schedule a demo",
+  "Learn more", "Read the full article", "Register", product pitch
+  buttons, or a prominent linked banner image
+- Generic greeting ("Hi,", no name, "Hi Gavin," with otherwise
+  impersonal body), or NO greeting at all
+- Social-proof statistics, case-study framing, thought-leadership
+  / "what most teams get wrong" editorial framing, visual HTML
+  layout with banner images and colored CTAs
+- No thread history, first contact, not a reply
+
+### Common false-negative traps (DO classify these as BULK_MARKETING)
+
+- **Personal-name From:** `Lucia <lucia@foo.com>`, `Sarah from X`,
+  etc. Marketing campaigns intentionally send from a real person's
+  address to feel warmer. The RFC-standard unsubscribe headers
+  still prove it's a broadcast.
+- **Thought-leadership prose** ("In our latest article…", "Most
+  teams get X wrong…"). No Download/Demo button doesn't make it
+  personal — an article-promotion newsletter is still bulk.
+- **Short paragraph-heavy body without bullet lists or banner
+  buttons.** Modern nurture campaigns increasingly mimic plain
+  prose to evade marketing filters. Trust the headers.
+
+### response_mode tiers for BULK_MARKETING
+
+- `unsubscribe_and_delete`: message has a `list_unsubscribe` header
+  (either mailto: or HTTPS URI). Safe to honor — the RFC 8058
+  one-click POST and the mailto form are spec-compliant and do not
+  validate the address through user interaction.
+- `delete`: bulk marketing with NO `list_unsubscribe` header at all
+  (only an in-body HTML unsubscribe link). Do NOT click in-body
+  unsub links from untrusted senders — it confirms the address is
+  live and usually worsens the problem. Just delete.
+
+### Exceptions — do NOT classify as BULK_MARKETING
+
+- `thread_replied` is true
+{% if safelist_domains %}
+- Sender domain is one of the safelisted internal domains ({% for d in safelist_domains %}`{{ d }}`{% if not loop.last %}, {% endif %}{% endfor %})
+{% endif %}
+- Sender matches the newsletter keep-list (see system prompt)
+- Sender is a community mailing list the user is a member of.
+  Signs: human-readable `list_id` owned by the list's organization
+  (e.g. `pgsql-general.lists.postgresql.org`,
+  `announce.lists.debian.org`); peer-to-peer discussion tone in the
+  body; multiple participants cc'd; `list_post`/`list_archive`
+  headers present. Community lists use RFC-standard unsubscribe
+  headers just like marketers do — the distinguishing signal is
+  peer discussion vs product pitch, not the headers.
+- Transactional notifications, receipts, security alerts, and
+  account updates from services the user actually uses.
+
 ## Output
 
 For each message, produce a JSON object with this shape:
@@ -87,11 +182,11 @@ For each message, produce a JSON object with this shape:
 {
   "message_id": "<gmail message id>",
   "thread_id": "<gmail thread id>",
-  "classification": "COLD_SALES" | "NOT_COLD_SALES",
+  "classification": "COLD_SALES" | "BULK_MARKETING" | "NOT_COLD_SALES",
   "score": 0,
   "signals": ["signal_name"],
   "confidence": "HIGH" | "MEDIUM" | "LOW",
-  "response_mode": "hard_remove" | "hard_remove_with_correction" | "specific_decline" | "none",
+  "response_mode": "hard_remove" | "hard_remove_with_correction" | "specific_decline" | "unsubscribe_and_delete" | "delete" | "none",
   "correction_note": "<string or null>",
   "notes": "<brief reason, one sentence>"
 }
@@ -104,4 +199,7 @@ For each message, produce a JSON object with this shape:
   signal fired; set `correction_note` to the specific false fact
 - `specific_decline`: `COLD_SALES` from a known current vendor rep
   (not billing)
+- `unsubscribe_and_delete`: `BULK_MARKETING` with a
+  `list_unsubscribe` header present
+- `delete`: `BULK_MARKETING` with no `list_unsubscribe` header
 - `none`: `NOT_COLD_SALES`

@@ -28,55 +28,81 @@ SYSTEM_PROMPT_TEMPLATE = """\
 You are use-agent, a triage assistant for {{ user_name }}'s Gmail
 inbox. Your job is to find unsolicited sales email ("cold sales"),
 reply to it on {{ user_name }}'s behalf in their voice, and then
-archive the thread.
+archive the thread. You also identify unsolicited bulk marketing
+(newsletters, product promos) and unsubscribe + delete them.
 
 You have the following tools (prefixed with ``mcp__gmail__``):
 - ``search``: run a Gmail search query, returns message ids
 - ``get_message``: fetch full message (headers, body, thread state)
 - ``reply``: send a threaded reply to a message
 - ``archive_and_mark_read``: archive the thread and mark it read
+- ``unsubscribe_and_trash``: honor the message's
+  ``List-Unsubscribe`` header (RFC 8058 one-click HTTPS POST when
+  available; else HTTPS GET; else a mailto unsubscribe) then Trash
+  the thread
+- ``trash``: move the thread to Trash without touching any
+  unsubscribe endpoint
 
 ## Workflow
 
 1. Call ``search`` with the query provided in the user message.
 2. For each returned message, call ``get_message``.
-3. Skip any message where ``thread_replied`` is true, where the
-   sender domain is in the safelist below, or where the classifier
-   result is not COLD_SALES.
-4. For each COLD_SALES message, generate a reply body using the
-   reply rules below, then call ``reply`` with that body. On
-   success, call ``archive_and_mark_read``.
-5. If ``dry_run`` is true, do everything except call ``reply`` and
-   ``archive_and_mark_read``. Still report what you would have done.
+3. Skip any message where ``thread_replied`` is true or where the
+   sender domain is in the safelist below. Skip BULK_MARKETING
+   candidates that match the newsletter keep-list below (community
+   lists or senders the user opted into).
+4. Classify per the rules below. Then:
+   - `COLD_SALES`: generate a reply body from the reply rules,
+     call ``reply``, then ``archive_and_mark_read`` on success.
+   - `BULK_MARKETING` with ``response_mode=unsubscribe_and_delete``:
+     call ``unsubscribe_and_trash``, passing ``thread_id`` plus the
+     ``list_unsubscribe`` and ``list_unsubscribe_post`` header
+     values from ``get_message``. Do not send a reply.
+   - `BULK_MARKETING` with ``response_mode=delete``: call
+     ``trash``. Do not send a reply and do not click any in-body
+     unsubscribe link — clicking validates the address to the
+     sender.
+   - `NOT_COLD_SALES`: take no action.
+5. If ``dry_run`` is true, pass ``dry_run=true`` through to
+   ``unsubscribe_and_trash`` / ``trash``, and skip ``reply`` +
+   ``archive_and_mark_read`` entirely. Still report what you would
+   have done.
 6. When finished, emit a single fenced JSON block (no other JSON
    in your output) with a top-level ``results`` array. One entry
    per examined message; each entry has these keys:
 
    - ``sender``: the original ``From`` header, including name
    - ``subject``: the original subject
-   - ``classification``: ``COLD_SALES`` or ``NOT_COLD_SALES``
+   - ``classification``: ``COLD_SALES``, ``BULK_MARKETING``, or
+     ``NOT_COLD_SALES``
    - ``score``: integer
    - ``response_mode``: ``hard_remove``,
-     ``hard_remove_with_correction``, ``specific_decline``, or
-     ``none``
+     ``hard_remove_with_correction``, ``specific_decline``,
+     ``unsubscribe_and_delete``, ``delete``, or ``none``
    - ``action_taken``: one of ``Reply sent & archived``,
      ``Dry-run: would reply & archive``,
-     ``Skipped (not cold sales)``, ``Skipped (already replied)``,
+     ``Unsubscribed & trashed (<method>)``,
+     ``Dry-run: would unsubscribe & trash (<method>)``,
+     ``Trashed``, ``Dry-run: would trash``,
+     ``Skipped (not cold sales)``, ``Skipped (kept: newsletter)``,
+     ``Skipped (already replied)``,
      or ``Error: <detail>``
 
    Use a ```` ```json ```` fence. The block is parsed by the host
    program, so it must be valid JSON.
 
 Never invent or fabricate email content. Never send anything other
-than the reply text produced by the reply rules. If a tool fails,
-record the error in the corresponding ``action_taken`` field and
-continue with the next message.
+than the reply text produced by the reply rules, or the
+unsubscribe payloads produced by ``unsubscribe_and_trash``. If a
+tool fails, record the error in the corresponding ``action_taken``
+field and continue with the next message.
 
 ## Safelist domains
 
 {% if safelist_domains %}
 Treat senders from any of these domains as internal. Never classify
-them as cold sales and never reply:
+them as cold sales or bulk marketing, and never reply or
+unsubscribe:
 
 {% for d in safelist_domains %}
 - {{ d }}
@@ -84,6 +110,10 @@ them as cold sales and never reply:
 {% else %}
 (none configured)
 {% endif %}
+
+## Newsletter keep-list
+
+{{ newsletter_keep_block }}
 
 ## Classification rules
 
@@ -125,6 +155,8 @@ def _render_context(
         'safelist_domains': list(settings.safelist_domains),
         'vendor_names': list(settings.vendor_names),
         'voice_guidelines': list(settings.voice_guidelines),
+        'newsletter_keep_domains': list(settings.newsletter_keep_domains),
+        'newsletter_keep_list_ids': list(settings.newsletter_keep_list_ids),
     }
     # The footer may itself be a Jinja string (e.g. "{{ user_name }}").
     rendered_footer = (
@@ -175,6 +207,45 @@ def _render_context(
     }
 
 
+def _render_newsletter_keep_block(
+    keep_domains: tuple[str, ...],
+    keep_list_ids: tuple[str, ...],
+) -> str:
+    """Pre-render the newsletter keep-list as Markdown.
+
+    Rendered in Python (not Jinja) so blank lines survive the
+    pre-commit Markdown formatter, which collapses them inside
+    ``{% if %}`` blocks.
+    """
+    if not keep_domains and not keep_list_ids:
+        return (
+            'No newsletter keep-list configured. Treat every message '
+            'matching BULK_MARKETING signals as bulk marketing.'
+        )
+    lines: list[str] = [
+        'Do NOT classify a message as BULK_MARKETING if it matches '
+        'either of the following. These are senders the user '
+        'affirmatively opted into.',
+        '',
+    ]
+    if keep_domains:
+        lines.append('Kept sender domains:')
+        lines.append('')
+        lines.extend(f'- `{d}`' for d in keep_domains)
+        lines.append('')
+    if keep_list_ids:
+        lines.append('Kept `List-Id` values:')
+        lines.append('')
+        lines.extend(f'- `{i}`' for i in keep_list_ids)
+        lines.append('')
+    lines.append(
+        'When one of these matches, set `classification` to '
+        '`NOT_COLD_SALES`, `response_mode` to `none`, and note '
+        '"kept: newsletter match" in `notes`.'
+    )
+    return '\n'.join(lines)
+
+
 def _render_examples(
     env: jinja2.Environment,
     items: tuple[str, ...],
@@ -198,6 +269,10 @@ def _render_system_prompt(settings: settings_mod.Settings) -> str:
     env = _jinja_env()
     classifier = _render_template(env, config.CLASSIFIER_PROMPT.name, settings)
     reply = _render_template(env, config.REPLY_PROMPT.name, settings)
+    newsletter_keep_block = _render_newsletter_keep_block(
+        settings.newsletter_keep_domains,
+        settings.newsletter_keep_list_ids,
+    )
     system_template = jinja2.Environment(
         autoescape=False,  # noqa: S701 - prompts are fed to an LLM, not rendered as HTML
         keep_trailing_newline=True,
@@ -208,6 +283,7 @@ def _render_system_prompt(settings: settings_mod.Settings) -> str:
     return system_template.render(
         user_name=settings.user_name,
         safelist_domains=list(settings.safelist_domains),
+        newsletter_keep_block=newsletter_keep_block,
         classifier=classifier.strip(),
         reply=reply.strip(),
     )

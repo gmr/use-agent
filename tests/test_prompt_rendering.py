@@ -124,3 +124,59 @@ def test_voice_guidelines_render_as_bullets(
     prompt = agent._render_system_prompt(s)
     assert '- first' in prompt
     assert '- second' in prompt
+
+
+def test_newsletter_keep_lists_appear_in_prompt(
+    tmp_path: pathlib.Path,
+) -> None:
+    s = _load(
+        tmp_path,
+        """
+        [user]
+        name = "x"
+        organization = "y"
+
+        [newsletters]
+        keep_domains = ["github.com"]
+        keep_list_ids = ["pgsql-general.lists.postgresql.org"]
+        """,
+    )
+    prompt = agent._render_system_prompt(s)
+    assert 'github.com' in prompt
+    assert 'pgsql-general.lists.postgresql.org' in prompt
+    assert 'affirmatively opted into' in prompt
+
+
+def test_empty_newsletter_keep_list_has_default_copy(
+    tmp_path: pathlib.Path,
+) -> None:
+    s = _load(
+        tmp_path,
+        """
+        [user]
+        name = "x"
+        organization = "y"
+        """,
+    )
+    prompt = agent._render_system_prompt(s)
+    assert 'No newsletter keep-list configured' in prompt
+
+
+def test_bulk_marketing_response_modes_documented(
+    tmp_path: pathlib.Path,
+) -> None:
+    s = _load(
+        tmp_path,
+        """
+        [user]
+        name = "x"
+        organization = "y"
+        """,
+    )
+    prompt = agent._render_system_prompt(s)
+    # The full set of response modes must appear so the agent has
+    # the vocabulary needed to emit valid JSON rows.
+    assert 'unsubscribe_and_delete' in prompt
+    assert 'BULK_MARKETING' in prompt
+    assert 'unsubscribe_and_trash' in prompt
+    assert 'trash' in prompt

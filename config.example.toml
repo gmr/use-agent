@@ -76,6 +76,22 @@ specific_decline = [
   "It's just not a fit for us right now. I'll keep your info on file and reach out should that change.",
 ]
 
+[newsletters]
+# Senders whose bulk mail should NOT be classified as
+# BULK_MARKETING — community mailing lists, vendor product
+# updates, or anything else you opted into.
+#
+# Matched first by List-Id (precise — one value per list on a
+# given domain), then by sender domain (coarse — trusts the whole
+# domain). Leave both empty to unsubscribe from every bulk list.
+keep_domains = [
+  # "github.com",
+  # "lwn.net",
+]
+keep_list_ids = [
+  # "pgsql-general.lists.postgresql.org",
+]
+
 [agent]
 # Claude model that drives the agent.
 model = "claude-haiku-4-5-20251001"
