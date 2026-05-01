@@ -289,13 +289,29 @@ def _render_system_prompt(settings: settings_mod.Settings) -> str:
     )
 
 
-def _user_prompt(*, query: str, max_results: int, dry_run: bool) -> str:
-    return (
+def _user_prompt(
+    *,
+    query: str,
+    max_results: int,
+    dry_run: bool,
+    delete: bool,
+) -> str:
+    prompt = (
         'Process the Gmail inbox now.\n\n'
         f'search query: {query}\n'
         f'max_results: {max_results}\n'
         f'dry_run: {str(dry_run).lower()}\n'
     )
+    if delete:
+        prompt += (
+            '\nOverride: when ``classification`` is ``COLD_SALES`` or '
+            '``BULK_MARKETING``, do NOT call ``reply`` and do NOT call '
+            '``unsubscribe_and_trash``. Call ``trash`` instead (passing '
+            '``dry_run`` through). Set ``response_mode`` to ``delete`` '
+            'and ``action_taken`` to ``Trashed`` (or '
+            '``Dry-run: would trash`` when ``dry_run`` is true).\n'
+        )
+    return prompt
 
 
 async def run(
@@ -306,6 +322,7 @@ async def run(
     max_results: int | None = None,
     lookback: str | None = None,
     dry_run: bool = False,
+    delete: bool = False,
 ) -> int:
     """Execute a single agent pass over the inbox.
 
@@ -346,12 +363,14 @@ async def run(
         query=effective_query,
         max_results=effective_max,
         dry_run=dry_run,
+        delete=delete,
     )
     LOGGER.debug(
-        'starting agent run: query=%r max=%d dry_run=%s model=%s',
+        'starting agent run: query=%r max=%d dry_run=%s delete=%s model=%s',
         effective_query,
         effective_max,
         dry_run,
+        delete,
         settings.model,
     )
     async for message in claude_agent_sdk.query(

@@ -38,6 +38,7 @@ def test_parser_run_defaults_to_pretty_mode() -> None:
     assert args.output is reporter.Mode.PRETTY
     assert args.daemon is False
     assert args.dry_run is False
+    assert args.delete is False
     assert args.interval == cli.DEFAULT_INTERVAL_SECONDS
     assert args.query is None
     assert args.max_results is None

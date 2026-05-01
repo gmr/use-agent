@@ -87,6 +87,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help='classify only; do not reply or archive',
     )
     run_p.add_argument(
+        '--delete',
+        action='store_true',
+        help=(
+            'for any message classified COLD_SALES or BULK_MARKETING, '
+            'trash the thread instead of replying / unsubscribing'
+        ),
+    )
+    run_p.add_argument(
         '--daemon',
         action='store_true',
         help='run continuously; re-process the inbox every --interval',
@@ -158,6 +166,7 @@ async def _run_once(
         max_results=args.max_results,
         lookback=args.lookback,
         dry_run=args.dry_run,
+        delete=args.delete,
     )
 
 

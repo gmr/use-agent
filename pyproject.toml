@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "use-agent"
-version = "1.0.0b4"
+version = "1.0.0b5"
 description = "Claude Agent that triages unsolicited sales email in Gmail."
 readme = "README.md"
 requires-python = ">=3.14"
