@@ -162,6 +162,42 @@ def test_empty_newsletter_keep_list_has_default_copy(
     assert 'No newsletter keep-list configured' in prompt
 
 
+def _prompt(**kwargs: object) -> str:
+    defaults = {
+        'query': 'in:inbox',
+        'max_results': 25,
+        'dry_run': False,
+        'delete_only': False,
+        'delete': False,
+    }
+    defaults.update(kwargs)
+    return agent._user_prompt(**defaults)
+
+
+def test_user_prompt_has_no_override_by_default() -> None:
+    assert 'Override' not in _prompt()
+
+
+def test_user_prompt_delete_only_override() -> None:
+    prompt = _prompt(delete_only=True)
+    assert 'do NOT call ``reply``' in prompt
+    assert 'Call ``trash`` instead' in prompt
+
+
+def test_user_prompt_delete_replies_then_trashes() -> None:
+    prompt = _prompt(delete=True)
+    assert 'after replying' in prompt
+    assert 'instead of ``archive_and_mark_read``' in prompt
+    assert 'Reply sent & trashed' in prompt
+
+
+def test_user_prompt_delete_only_takes_precedence() -> None:
+    # delete_only wins if both are somehow set (CLI forbids it).
+    prompt = _prompt(delete_only=True, delete=True)
+    assert 'do NOT call ``reply``' in prompt
+    assert 'after replying' not in prompt
+
+
 def test_bulk_marketing_response_modes_documented(
     tmp_path: pathlib.Path,
 ) -> None:

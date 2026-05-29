@@ -81,6 +81,7 @@ You have the following tools (prefixed with ``mcp__gmail__``):
      ``unsubscribe_and_delete``, ``delete``, or ``none``
    - ``action_taken``: one of ``Reply sent & archived``,
      ``Dry-run: would reply & archive``,
+     ``Reply sent & trashed``, ``Dry-run: would reply & trash``,
      ``Unsubscribed & trashed (<method>)``,
      ``Dry-run: would unsubscribe & trash (<method>)``,
      ``Trashed``, ``Dry-run: would trash``,
@@ -294,6 +295,7 @@ def _user_prompt(
     query: str,
     max_results: int,
     dry_run: bool,
+    delete_only: bool,
     delete: bool,
 ) -> str:
     prompt = (
@@ -302,7 +304,7 @@ def _user_prompt(
         f'max_results: {max_results}\n'
         f'dry_run: {str(dry_run).lower()}\n'
     )
-    if delete:
+    if delete_only:
         prompt += (
             '\nOverride: when ``classification`` is ``COLD_SALES`` or '
             '``BULK_MARKETING``, do NOT call ``reply`` and do NOT call '
@@ -310,6 +312,14 @@ def _user_prompt(
             '``dry_run`` through). Set ``response_mode`` to ``delete`` '
             'and ``action_taken`` to ``Trashed`` (or '
             '``Dry-run: would trash`` when ``dry_run`` is true).\n'
+        )
+    elif delete:
+        prompt += (
+            '\nOverride: after replying to a ``COLD_SALES`` message, '
+            'call ``trash`` instead of ``archive_and_mark_read`` '
+            '(passing ``dry_run`` through). Set ``action_taken`` to '
+            '``Reply sent & trashed`` (or ``Dry-run: would reply & '
+            'trash`` when ``dry_run`` is true).\n'
         )
     return prompt
 
@@ -322,6 +332,7 @@ async def run(
     max_results: int | None = None,
     lookback: str | None = None,
     dry_run: bool = False,
+    delete_only: bool = False,
     delete: bool = False,
 ) -> int:
     """Execute a single agent pass over the inbox.
@@ -363,13 +374,16 @@ async def run(
         query=effective_query,
         max_results=effective_max,
         dry_run=dry_run,
+        delete_only=delete_only,
         delete=delete,
     )
     LOGGER.debug(
-        'starting agent run: query=%r max=%d dry_run=%s delete=%s model=%s',
+        'starting agent run: query=%r max=%d dry_run=%s delete_only=%s '
+        'delete=%s model=%s',
         effective_query,
         effective_max,
         dry_run,
+        delete_only,
         delete,
         settings.model,
     )

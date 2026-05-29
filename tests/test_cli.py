@@ -38,6 +38,7 @@ def test_parser_run_defaults_to_pretty_mode() -> None:
     assert args.output is reporter.Mode.PRETTY
     assert args.daemon is False
     assert args.dry_run is False
+    assert args.delete_only is False
     assert args.delete is False
     assert args.interval == cli.DEFAULT_INTERVAL_SECONDS
     assert args.query is None
@@ -48,6 +49,22 @@ def test_parser_run_json_and_plain_are_mutually_exclusive() -> None:
     parser = cli._build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(['run', '--json', '--plain'])
+
+
+def test_parser_delete_flags_parse() -> None:
+    parser = cli._build_parser()
+    args = parser.parse_args(['run', '--delete'])
+    assert args.delete is True
+    assert args.delete_only is False
+    args = parser.parse_args(['run', '--delete-only'])
+    assert args.delete_only is True
+    assert args.delete is False
+
+
+def test_parser_delete_and_delete_only_are_mutually_exclusive() -> None:
+    parser = cli._build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(['run', '--delete', '--delete-only'])
 
 
 def test_parser_daemon_interval_parses() -> None:

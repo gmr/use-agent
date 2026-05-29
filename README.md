@@ -204,6 +204,10 @@ use-agent run --dry-run          # classify but don't reply/archive
 use-agent run --max 10           # examine at most 10 candidates
 use-agent run --query 'is:unread label:followup'  # custom query
 
+# Trashing instead of the default reply/archive
+use-agent run --delete           # reply to COLD_SALES, then trash (not archive)
+use-agent run --delete-only      # trash COLD_SALES/BULK_MARKETING, no reply/unsubscribe
+
 # Output format (default is pretty)
 use-agent run --plain            # no ANSI, pipe-delimited table
 use-agent run --json             # stdout is a single JSON document

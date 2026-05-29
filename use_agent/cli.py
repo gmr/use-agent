@@ -86,12 +86,21 @@ def _build_parser() -> argparse.ArgumentParser:
         action='store_true',
         help='classify only; do not reply or archive',
     )
-    run_p.add_argument(
-        '--delete',
+    del_group = run_p.add_mutually_exclusive_group()
+    del_group.add_argument(
+        '--delete-only',
         action='store_true',
         help=(
             'for any message classified COLD_SALES or BULK_MARKETING, '
             'trash the thread instead of replying / unsubscribing'
+        ),
+    )
+    del_group.add_argument(
+        '--delete',
+        action='store_true',
+        help=(
+            'reply to COLD_SALES as usual, then trash the thread '
+            'instead of archiving it'
         ),
     )
     run_p.add_argument(
@@ -166,6 +175,7 @@ async def _run_once(
         max_results=args.max_results,
         lookback=args.lookback,
         dry_run=args.dry_run,
+        delete_only=args.delete_only,
         delete=args.delete,
     )
 
