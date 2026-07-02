@@ -192,8 +192,10 @@ def build_mcp_server(
 
     @claude_agent_sdk.tool(
         'get_message',
-        'Fetch a Gmail message including headers, body, and '
-        'whether the thread already has a sent reply.',
+        'Fetch a Gmail message including headers, body, whether the '
+        'thread already has a sent reply (thread_replied), and '
+        'whether the user has previously emailed this sender in any '
+        'thread (prior_correspondence).',
         {'message_id': str},
     )
     async def gmail_get_message(

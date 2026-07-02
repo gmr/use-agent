@@ -22,6 +22,13 @@ LOGGER = logging.getLogger(__name__)
 _INBOX_LIST_PAGE_CAP: int = 20
 _INBOX_LIST_PAGE_SIZE: int = 500
 
+# A sender is treated as an established inbound contact (not cold
+# outreach) if they've been emailing since at least this long before
+# the message under review. Cold sequences are compressed into days;
+# a real relationship spans months.
+_RELATIONSHIP_MIN_AGE_DAYS: int = 60
+_SECONDS_PER_DAY: int = 86400
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Message:
@@ -37,6 +44,7 @@ class Message:
     body: str
     snippet: str
     thread_replied: bool
+    prior_correspondence: bool
     label_ids: tuple[str, ...]
     list_unsubscribe: str
     list_unsubscribe_post: str
@@ -53,6 +61,7 @@ class Message:
             'body': self.body,
             'snippet': self.snippet,
             'thread_replied': self.thread_replied,
+            'prior_correspondence': self.prior_correspondence,
             'labels': list(self.label_ids),
             'list_unsubscribe': self.list_unsubscribe,
             'list_unsubscribe_post': self.list_unsubscribe_post,
@@ -214,6 +223,10 @@ class GmailClient:
         headers = _headers_to_dict(raw.get('payload', {}).get('headers', []))
         body = _extract_text_body(raw.get('payload', {}))
         thread_replied = self._thread_has_sent(raw['threadId'])
+        internal_ms = int(raw.get('internalDate', 0) or 0)
+        prior_correspondence = self._has_prior_correspondence(
+            headers.get('from', ''), internal_ms // 1000
+        )
         return Message(
             message_id=raw['id'],
             thread_id=raw['threadId'],
@@ -225,6 +238,7 @@ class GmailClient:
             body=body,
             snippet=raw.get('snippet', ''),
             thread_replied=thread_replied,
+            prior_correspondence=prior_correspondence,
             label_ids=tuple(raw.get('labelIds', [])),
             list_unsubscribe=headers.get('list-unsubscribe', ''),
             list_unsubscribe_post=headers.get('list-unsubscribe-post', ''),
@@ -320,6 +334,27 @@ class GmailClient:
         LOGGER.info('sent unsubscribe mail %s to %s', sent.get('id'), to)
         return sent['id']
 
+    def _has_prior_correspondence(
+        self, from_header: str, message_epoch_s: int
+    ) -> bool:
+        """True if this sender is an established contact.
+
+        Either the user has sent mail to this address before the
+        message, or the sender has an inbound history predating the
+        relationship age cutoff. Queries run cheapest-first and stop
+        at the first match, each an existence search capped at one
+        result. A failed lookup degrades to ``False`` (treat as no
+        known relationship) rather than aborting the fetch.
+        """
+        try:
+            return any(
+                self.search(q, max_results=1)
+                for q in _relationship_queries(from_header, message_epoch_s)
+            )
+        except Exception:
+            LOGGER.exception('prior-correspondence lookup failed')
+            return False
+
     def _thread_has_sent(self, thread_id: str) -> bool:
         thread = (
             self._service.users()
@@ -374,6 +409,37 @@ def _reply_to_address(from_header: str) -> str:
     """Prefer the bare email address for the To: header."""
     _name, addr = email.utils.parseaddr(from_header)
     return addr or from_header
+
+
+def _relationship_queries(
+    from_header: str,
+    message_epoch_s: int,
+    min_age_days: int = _RELATIONSHIP_MIN_AGE_DAYS,
+) -> list[str]:
+    """Build the ordered relationship queries to test for a sender.
+
+    Empty when there's no usable address or timestamp to search on.
+    Ordered cheapest-signal-first so the caller can stop at the first
+    match:
+
+    1. ``in:sent to:<addr> before:<msg>`` — mail the user sent to this
+       address *before* the message arrived (an outbound
+       relationship). The ``before:`` bound keeps the agent's own
+       decline replies and mailto unsubscribes — always sent after
+       the message lands — from being mistaken for a relationship.
+    2. ``from:<addr> before:<msg - min_age_days>`` — inbound mail
+       predating the age cutoff: a long-standing contact, as opposed
+       to a cold sequence compressed into days. Omitted when the
+       cutoff would fall before the epoch.
+    """
+    _name, addr = email.utils.parseaddr(from_header)
+    if not addr or message_epoch_s <= 0:
+        return []
+    queries = [f'in:sent to:{addr} before:{message_epoch_s}']
+    cutoff = message_epoch_s - min_age_days * _SECONDS_PER_DAY
+    if cutoff > 0:
+        queries.append(f'from:{addr} before:{cutoff}')
+    return queries
 
 
 def _build_references(existing: str, message_id: str) -> str:
