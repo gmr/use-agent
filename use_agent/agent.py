@@ -474,7 +474,7 @@ def _forward(message: object, reporter: reporter_mod.Reporter) -> None:
                 reporter.on_text(block.text)
 
 
-_PRUNE_OPERAND_RE = re.compile(r'\b(in|label):(\S+)')
+_PRUNE_OPERAND_RE = re.compile(r'(?<!-)\b(in|label):(\S+)')
 
 
 def _prune_query(query: str) -> str:

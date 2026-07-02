@@ -29,3 +29,11 @@ def test_appended_lookback_does_not_shadow_folder() -> None:
 
 def test_query_without_folder_falls_back_to_inbox() -> None:
     assert agent._prune_query('is:unread from:foo@example.com') == 'in:inbox'
+
+
+def test_negated_folder_operand_does_not_scope() -> None:
+    assert agent._prune_query('-in:spam is:unread') == 'in:inbox'
+
+
+def test_negated_folder_operand_does_not_shadow_positive_one() -> None:
+    assert agent._prune_query('in:spam -label:promotions') == 'in:spam'

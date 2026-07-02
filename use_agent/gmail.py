@@ -19,8 +19,8 @@ LOGGER = logging.getLogger(__name__)
 
 # Guard against huge inboxes: each page costs one API call. 20 pages
 # of 500 covers 10,000 messages — well past any realistic use.
-_INBOX_LIST_PAGE_CAP: int = 20
-_INBOX_LIST_PAGE_SIZE: int = 500
+_LIST_PAGE_CAP: int = 20
+_LIST_PAGE_SIZE: int = 500
 
 # A sender is treated as an established inbound contact (not cold
 # outreach) if they've been emailing since at least this long before
@@ -192,14 +192,14 @@ class GmailClient:
         """
         ids: set[str] = set()
         page_token: str | None = None
-        for _ in range(_INBOX_LIST_PAGE_CAP):
+        for _ in range(_LIST_PAGE_CAP):
             resp = (
                 self._service.users()
                 .messages()
                 .list(
                     userId='me',
                     q=query,
-                    maxResults=_INBOX_LIST_PAGE_SIZE,
+                    maxResults=_LIST_PAGE_SIZE,
                     pageToken=page_token,
                 )
                 .execute()
@@ -211,7 +211,7 @@ class GmailClient:
                 return ids
         LOGGER.warning(
             'message listing exceeded %d pages; skipping cache prune',
-            _INBOX_LIST_PAGE_CAP,
+            _LIST_PAGE_CAP,
         )
         return None
 
