@@ -115,7 +115,7 @@ def test_responses_labelled():
         _row(response_mode='delete'),
         _row(response_mode='delete'),
     ]
-    responses = {r['label']: r['count'] for r in _ctx(rows)['responses']}
+    responses = {r['name']: r['count'] for r in _ctx(rows)['responses']}
     assert responses['Deleted'] == 2
     assert responses['Unsubscribed & deleted'] == 1
 

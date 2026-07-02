@@ -142,15 +142,28 @@ def _bar_width(count: int, max_count: int) -> str:
     return f'{round(count / max_count * 100)}%'
 
 
+def _bars(
+    pairs: list[tuple[str, int]],
+) -> list[dict[str, typing.Any]]:
+    """Turn ``(name, count)`` pairs into rows with a relative bar width.
+
+    Shared by the day / response / theme sections, which are identical
+    bar charts differing only in their source data.
+    """
+    max_count = max((n for _, n in pairs), default=0)
+    return [
+        {'name': name, 'count': n, 'width': _bar_width(n, max_count)}
+        for name, n in pairs
+    ]
+
+
 def _action_matches(rows: list[dict[str, typing.Any]], needle: str) -> int:
     return sum(1 for r in rows if needle in (r['action_taken'] or ''))
 
 
 def _stats(rows: list[dict[str, typing.Any]]) -> list[dict[str, str]]:
     removed = sum(
-        1
-        for r in rows
-        if 'rash' in (r['action_taken'] or '')  # Trashed / trashed
+        1 for r in rows if 'trashed' in (r['action_taken'] or '').lower()
     )
     return [
         {'value': str(len(rows)), 'label': 'Actions taken'},
@@ -207,35 +220,23 @@ def _days(
             counts[stamp.astimezone().date()] += 1
     day = start.date()
     last = end.date()
-    ordered: list[tuple[datetime.date, int]] = []
+    pairs: list[tuple[str, int]] = []
     while day <= last:
-        ordered.append((day, counts.get(day, 0)))
+        pairs.append((day.strftime('%a'), counts.get(day, 0)))
         day += datetime.timedelta(days=1)
-    max_count = max((c for _, c in ordered), default=0)
-    return [
-        {
-            'name': d.strftime('%a'),
-            'count': c,
-            'width': _bar_width(c, max_count),
-        }
-        for d, c in ordered
-    ]
+    return _bars(pairs)
 
 
 def _responses(
     rows: list[dict[str, typing.Any]],
 ) -> list[dict[str, typing.Any]]:
     counts = collections.Counter(r['response_mode'] for r in rows)
-    max_count = max(counts.values(), default=0)
-    ranked = counts.most_common()
-    return [
-        {
-            'label': _RESPONSE_LABELS.get(mode or '', mode or 'Other'),
-            'count': n,
-            'width': _bar_width(n, max_count),
-        }
-        for mode, n in ranked
-    ]
+    return _bars(
+        [
+            (_RESPONSE_LABELS.get(mode or '', mode or 'Other'), n)
+            for mode, n in counts.most_common()
+        ]
+    )
 
 
 def _offenders(
@@ -284,12 +285,7 @@ def _themes(
     counts = collections.Counter(
         (r['category'] or 'Uncategorized') for r in rows
     )
-    ranked = counts.most_common(_TOP_THEMES)
-    max_count = max((n for _, n in ranked), default=0)
-    return [
-        {'name': name, 'count': n, 'width': _bar_width(n, max_count)}
-        for name, n in ranked
-    ]
+    return _bars(counts.most_common(_TOP_THEMES))
 
 
 def _parse(stamp: str) -> datetime.datetime | None:
