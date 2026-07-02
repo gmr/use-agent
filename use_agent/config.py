@@ -64,7 +64,7 @@ def db_path(configured: str | None = None) -> pathlib.Path:
     """
     override = os.environ.get('USE_AGENT_DB')
     if override:
-        return pathlib.Path(override)
+        return pathlib.Path(override).expanduser()
     if configured:
         return pathlib.Path(configured).expanduser()
     return pathlib.Path.home() / '.use-agent' / 'actions.db'

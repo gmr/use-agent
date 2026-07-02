@@ -100,10 +100,12 @@ def _fetch_rows(
         cursor = conn.execute(
             'SELECT * FROM actions WHERE processed_at >= ? '
             'ORDER BY processed_at',
-            (start.isoformat(),),
+            (start.astimezone(datetime.UTC).isoformat(),),
         )
         return [dict(r) for r in cursor.fetchall()]
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as exc:
+        if 'no such table' not in str(exc):
+            raise
         LOGGER.warning('no actions table at %s; empty report', db_path)
         return []
     finally:

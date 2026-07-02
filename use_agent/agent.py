@@ -415,16 +415,19 @@ async def run(
         delete,
         settings.model,
     )
-    async for message in claude_agent_sdk.query(
-        prompt=prompt, options=options
-    ):
-        _forward(message, reporter)
-    seen.save()
-    rc = reporter.finish()
-    if store is not None:
-        _reconcile_history(store, reporter.summary)
-        store.close()
-    return rc
+    try:
+        async for message in claude_agent_sdk.query(
+            prompt=prompt, options=options
+        ):
+            _forward(message, reporter)
+        seen.save()
+        rc = reporter.finish()
+        if store is not None:
+            _reconcile_history(store, reporter.summary)
+        return rc
+    finally:
+        if store is not None:
+            store.close()
 
 
 def _reconcile_history(
@@ -444,17 +447,17 @@ def _reconcile_history(
         if not storage_mod.is_action(action_taken):
             continue
         message_id = str(row.get('message_id', '') or '')
-        sender = str(row.get('sender', ''))
-        subject = str(row.get('subject', ''))
+        sender = str(row.get('sender', '') or '')
+        subject = str(row.get('subject', '') or '')
         if store.has(message_id=message_id, sender=sender, subject=subject):
             continue
         store.record(
             sender=sender,
             subject=subject,
             sent_at=str(row.get('date', '') or ''),
-            classification=str(row.get('classification', '')),
+            classification=str(row.get('classification', '') or ''),
             category=str(row.get('category', '') or ''),
-            response_mode=str(row.get('response_mode', '')),
+            response_mode=str(row.get('response_mode', '') or ''),
             action_taken=action_taken,
             score=row.get('score'),
             message_id=message_id,
