@@ -51,6 +51,7 @@ class Reporter:
     """Collect streamed assistant text and emit a final summary."""
 
     mode: Mode = Mode.PRETTY
+    summary: list[dict[str, typing.Any]] | None = None
     _buffer: list[str] = dataclasses.field(default_factory=list)
     _stdout: rich.console.Console = dataclasses.field(init=False)
     _stderr: rich.console.Console = dataclasses.field(init=False)
@@ -97,6 +98,7 @@ class Reporter:
         """Render the final summary. Return process exit code."""
         full = '\n'.join(self._buffer)
         results = _extract_summary(full)
+        self.summary = results
         match self.mode:
             case Mode.JSON:
                 payload = {'results': results or []}

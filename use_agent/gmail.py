@@ -41,6 +41,7 @@ class Message:
     from_header: str
     to_header: str
     subject: str
+    date: str
     body: str
     snippet: str
     thread_replied: bool
@@ -58,6 +59,7 @@ class Message:
             'from': self.from_header,
             'to': self.to_header,
             'subject': self.subject,
+            'date': self.date,
             'body': self.body,
             'snippet': self.snippet,
             'thread_replied': self.thread_replied,
@@ -235,6 +237,7 @@ class GmailClient:
             from_header=headers.get('from', ''),
             to_header=headers.get('to', ''),
             subject=headers.get('subject', ''),
+            date=headers.get('date', ''),
             body=body,
             snippet=raw.get('snippet', ''),
             thread_replied=thread_replied,

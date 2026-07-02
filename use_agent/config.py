@@ -50,3 +50,11 @@ def cache_path() -> pathlib.Path:
     if override:
         return pathlib.Path(override)
     return _config_home() / 'cache.json'
+
+
+def db_path() -> pathlib.Path:
+    """Path to the SQLite action-history database."""
+    override = os.environ.get('USE_AGENT_DB')
+    if override:
+        return pathlib.Path(override)
+    return _config_home() / 'actions.db'
