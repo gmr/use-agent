@@ -55,9 +55,16 @@ def cache_path() -> pathlib.Path:
     return _config_home() / 'cache.json'
 
 
-def db_path() -> pathlib.Path:
-    """Path to the SQLite action-history database."""
+def db_path(configured: str | None = None) -> pathlib.Path:
+    """Path to the SQLite action-history database.
+
+    Resolution order: the ``USE_AGENT_DB`` env override, then the
+    ``[storage] path`` config setting (``configured``), then the
+    default ``~/.use-agent/actions.db``.
+    """
     override = os.environ.get('USE_AGENT_DB')
     if override:
         return pathlib.Path(override)
-    return _config_home() / 'actions.db'
+    if configured:
+        return pathlib.Path(configured).expanduser()
+    return pathlib.Path.home() / '.use-agent' / 'actions.db'

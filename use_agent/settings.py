@@ -70,6 +70,7 @@ class Settings:
     search_query: str
     max_results: int
     lookback: str | None
+    db_path: pathlib.Path
     report_recipients: tuple[str, ...]
     report_subject: str
 
@@ -97,6 +98,7 @@ class Settings:
         search = _section(data, 'search')
         newsletters = _section_opt(data, 'newsletters')
         report = _section_opt(data, 'report')
+        storage = _section_opt(data, 'storage')
         domains = tuple(
             str(d).strip().lower() for d in safelist.get('domains', ())
         )
@@ -151,6 +153,9 @@ class Settings:
             search_query=str(query),
             max_results=int(search.get('max_results', DEFAULT_MAX_RESULTS)),
             lookback=lookback,
+            db_path=config.db_path(
+                str(storage['path']) if storage.get('path') else None
+            ),
             report_recipients=tuple(
                 str(r).strip() for r in report.get('recipients', ())
             ),

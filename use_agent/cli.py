@@ -245,10 +245,9 @@ async def _run_daemon(
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
-    html = report.render(config.db_path(), days=args.days, since=args.since)
+    settings = settings_mod.Settings.load()
+    html = report.render(settings.db_path, days=args.days, since=args.since)
     if args.email:
-        # Settings (recipients, subject) are only needed to email.
-        settings = settings_mod.Settings.load()
         recipients = tuple(args.to) if args.to else settings.report_recipients
         if not recipients:
             LOGGER.error(

@@ -264,3 +264,40 @@ def test_lookback_invalid_raises(tmp_path: pathlib.Path) -> None:
     )
     with pytest.raises(ValueError, match='invalid lookback'):
         settings.Settings.load(cfg)
+
+
+def test_storage_path_from_config(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv('USE_AGENT_DB', raising=False)
+    cfg = _write(
+        tmp_path / 'c.toml',
+        """
+        [user]
+        name = "x"
+        organization = "y"
+
+        [storage]
+        path = "~/mail/actions.db"
+        """,
+    )
+    monkeypatch.setenv('HOME', str(tmp_path))
+    s = settings.Settings.load(cfg)
+    assert s.db_path == tmp_path / 'mail' / 'actions.db'
+
+
+def test_storage_path_defaults(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv('USE_AGENT_DB', raising=False)
+    monkeypatch.setenv('HOME', str(tmp_path))
+    cfg = _write(
+        tmp_path / 'c.toml',
+        """
+        [user]
+        name = "x"
+        organization = "y"
+        """,
+    )
+    s = settings.Settings.load(cfg)
+    assert s.db_path == tmp_path / '.use-agent' / 'actions.db'

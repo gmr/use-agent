@@ -380,7 +380,7 @@ async def run(
         None
         if dry_run
         else storage_mod.Store(
-            config.db_path(),
+            settings.db_path,
             query_target=storage_mod.query_target(effective_query),
         )
     )
