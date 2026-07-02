@@ -12,6 +12,9 @@ PROMPTS_DIR: pathlib.Path = pathlib.Path(__file__).parent / 'prompts'
 CLASSIFIER_PROMPT: pathlib.Path = PROMPTS_DIR / 'classifier.md'
 REPLY_PROMPT: pathlib.Path = PROMPTS_DIR / 'reply.md'
 
+TEMPLATES_DIR: pathlib.Path = pathlib.Path(__file__).parent / 'templates'
+REPORT_TEMPLATE: pathlib.Path = TEMPLATES_DIR / 'report.html.j2'
+
 
 def _config_home() -> pathlib.Path:
     raw = os.environ.get('XDG_CONFIG_HOME')
@@ -50,3 +53,18 @@ def cache_path() -> pathlib.Path:
     if override:
         return pathlib.Path(override)
     return _config_home() / 'cache.json'
+
+
+def db_path(configured: str | None = None) -> pathlib.Path:
+    """Path to the SQLite action-history database.
+
+    Resolution order: the ``USE_AGENT_DB`` env override, then the
+    ``[storage] path`` config setting (``configured``), then the
+    default ``~/.use-agent/actions.db``.
+    """
+    override = os.environ.get('USE_AGENT_DB')
+    if override:
+        return pathlib.Path(override).expanduser()
+    if configured:
+        return pathlib.Path(configured).expanduser()
+    return pathlib.Path.home() / '.use-agent' / 'actions.db'

@@ -14,6 +14,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         'USE_AGENT_CREDENTIALS',
         'USE_AGENT_TOKEN',
         'USE_AGENT_CACHE',
+        'USE_AGENT_DB',
         'XDG_CONFIG_HOME',
     ):
         monkeypatch.delenv(var, raising=False)
@@ -62,6 +63,28 @@ def test_env_overrides_win_over_xdg(
     assert config.credentials_path() == creds
     assert config.token_path() == token
     assert config.cache_path() == cache_file
+
+
+def test_db_path_defaults_to_dot_use_agent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    monkeypatch.setenv('HOME', str(tmp_path))
+    assert config.db_path() == tmp_path / '.use-agent' / 'actions.db'
+
+
+def test_db_path_uses_configured_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    monkeypatch.setenv('HOME', str(tmp_path))
+    assert config.db_path('~/custom/a.db') == (tmp_path / 'custom' / 'a.db')
+
+
+def test_db_path_env_overrides_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    override = tmp_path / 'env.db'
+    monkeypatch.setenv('USE_AGENT_DB', str(override))
+    assert config.db_path('~/ignored.db') == override
 
 
 def test_prompt_paths_resolve_to_shipped_files() -> None:

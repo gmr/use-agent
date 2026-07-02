@@ -109,3 +109,21 @@ max_results = 25
 # from "in:inbox is:unread" plus a -from:<domain> filter for every
 # safelist domain.
 # query = "in:inbox is:unread"
+
+[storage]
+# Where the SQLite action-history database lives. Defaults to
+# ~/.use-agent/actions.db. A leading ~ is expanded. The USE_AGENT_DB
+# environment variable overrides this setting.
+# path = "~/.use-agent/actions.db"
+
+[report]
+# Recipients of the emailed HTML report (use-agent report --email).
+# The report is sent from your own authenticated Gmail account, so
+# include yourself here to receive a copy. --to on the CLI overrides
+# this list for a single run.
+recipients = [
+  # "you@example.com",
+]
+
+# Subject line for the emailed report.
+# subject = "USE Agent · Weekly Report"

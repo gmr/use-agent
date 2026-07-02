@@ -10,6 +10,7 @@ from use_agent import config
 
 DEFAULT_MODEL: str = 'claude-haiku-4-5-20251001'
 DEFAULT_MAX_RESULTS: int = 25
+DEFAULT_REPORT_SUBJECT: str = 'USE Agent · Weekly Report'
 
 _LOOKBACK_RE: re.Pattern[str] = re.compile(r'^\d+[dmy]$')
 
@@ -69,6 +70,9 @@ class Settings:
     search_query: str
     max_results: int
     lookback: str | None
+    db_path: pathlib.Path
+    report_recipients: tuple[str, ...]
+    report_subject: str
 
     @classmethod
     def load(cls, path: pathlib.Path | None = None) -> 'Settings':  # noqa: UP037
@@ -93,6 +97,8 @@ class Settings:
         agent = _section(data, 'agent')
         search = _section(data, 'search')
         newsletters = _section_opt(data, 'newsletters')
+        report = _section_opt(data, 'report')
+        storage = _section_opt(data, 'storage')
         domains = tuple(
             str(d).strip().lower() for d in safelist.get('domains', ())
         )
@@ -147,6 +153,13 @@ class Settings:
             search_query=str(query),
             max_results=int(search.get('max_results', DEFAULT_MAX_RESULTS)),
             lookback=lookback,
+            db_path=config.db_path(
+                str(storage['path']) if storage.get('path') else None
+            ),
+            report_recipients=tuple(
+                str(r).strip() for r in report.get('recipients', ())
+            ),
+            report_subject=str(report.get('subject', DEFAULT_REPORT_SUBJECT)),
         )
 
 

@@ -20,6 +20,9 @@ from use_agent import (
 from use_agent import (
     settings as settings_mod,
 )
+from use_agent import (
+    storage as storage_mod,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +45,8 @@ You have the following tools (prefixed with ``mcp__gmail__``):
   the thread
 - ``trash``: move the thread to Trash without touching any
   unsubscribe endpoint
+- ``record_action``: persist a message you acted on to the action
+  history database (call once per acted-upon message)
 
 ## Workflow
 
@@ -63,18 +68,31 @@ You have the following tools (prefixed with ``mcp__gmail__``):
      unsubscribe link — clicking validates the address to the
      sender.
    - `NOT_COLD_SALES`: take no action.
-5. If ``dry_run`` is true, pass ``dry_run=true`` through to
+5. After each message you actually acted on (a reply, archive,
+   unsubscribe, or trash completed successfully), call
+   ``record_action`` once with ``message_id``, ``sender``,
+   ``subject``, ``sent_at`` (the ``date`` from ``get_message``),
+   ``classification``, ``category``, ``response_mode``,
+   ``action_taken``, and ``score``. Do NOT call it for skipped
+   messages, and do NOT call it when ``dry_run`` is true.
+6. If ``dry_run`` is true, pass ``dry_run=true`` through to
    ``unsubscribe_and_trash`` / ``trash``, and skip ``reply`` +
    ``archive_and_mark_read`` entirely. Still report what you would
    have done.
-6. When finished, emit a single fenced JSON block (no other JSON
+7. When finished, emit a single fenced JSON block (no other JSON
    in your output) with a top-level ``results`` array. One entry
    per examined message; each entry has these keys:
 
+   - ``message_id``: the Gmail ``message_id`` from ``get_message``
    - ``sender``: the original ``From`` header, including name
    - ``subject``: the original subject
+   - ``date``: the original ``Date`` header value from
+     ``get_message`` (copy it verbatim)
    - ``classification``: ``COLD_SALES``, ``BULK_MARKETING``, or
      ``NOT_COLD_SALES``
+   - ``category``: a 1-5 word label summarizing what the message is
+     about (e.g. ``Recruiter``, ``AI Solution``, ``Staff
+     Augmentation``, ``SEO Services``, ``Newsletter``). Title Case.
    - ``score``: integer
    - ``response_mode``: ``hard_remove``,
      ``hard_remove_with_correction``, ``specific_decline``,
@@ -356,7 +374,17 @@ async def run(
     )
     client = gmail.GmailClient(creds)
     seen = _load_and_prune_cache(client)
-    server = tools.build_mcp_server(client, seen)
+    # No history is written on a dry run; the store stays None and the
+    # record_action tool no-ops.
+    store = (
+        None
+        if dry_run
+        else storage_mod.Store(
+            settings.db_path,
+            query_target=storage_mod.query_target(effective_query),
+        )
+    )
+    server = tools.build_mcp_server(client, seen, store)
     options = claude_agent_sdk.ClaudeAgentOptions(
         system_prompt=_render_system_prompt(settings),
         mcp_servers={tools.MCP_SERVER_NAME: server},
@@ -387,12 +415,54 @@ async def run(
         delete,
         settings.model,
     )
-    async for message in claude_agent_sdk.query(
-        prompt=prompt, options=options
-    ):
-        _forward(message, reporter)
-    seen.save()
-    return reporter.finish()
+    try:
+        async for message in claude_agent_sdk.query(
+            prompt=prompt, options=options
+        ):
+            _forward(message, reporter)
+        seen.save()
+        rc = reporter.finish()
+        if store is not None:
+            _reconcile_history(store, reporter.summary)
+        return rc
+    finally:
+        if store is not None:
+            store.close()
+
+
+def _reconcile_history(
+    store: storage_mod.Store,
+    summary: list[dict[str, object]] | None,
+) -> None:
+    """Insert acted-upon summary rows the record_action tool missed.
+
+    The tool is the primary capture path, but the model may forget to
+    call it. Every acted-upon row in the final JSON summary that isn't
+    already recorded this run is inserted, tagged ``source='summary'``.
+    """
+    if not summary:
+        return
+    for row in summary:
+        action_taken = str(row.get('action_taken', ''))
+        if not storage_mod.is_action(action_taken):
+            continue
+        message_id = str(row.get('message_id', '') or '')
+        sender = str(row.get('sender', '') or '')
+        subject = str(row.get('subject', '') or '')
+        if store.has(message_id=message_id, sender=sender, subject=subject):
+            continue
+        store.record(
+            sender=sender,
+            subject=subject,
+            sent_at=str(row.get('date', '') or ''),
+            classification=str(row.get('classification', '') or ''),
+            category=str(row.get('category', '') or ''),
+            response_mode=str(row.get('response_mode', '') or ''),
+            action_taken=action_taken,
+            score=row.get('score'),
+            message_id=message_id,
+            source='summary',
+        )
 
 
 def _forward(message: object, reporter: reporter_mod.Reporter) -> None:

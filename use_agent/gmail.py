@@ -41,6 +41,7 @@ class Message:
     from_header: str
     to_header: str
     subject: str
+    date: str
     body: str
     snippet: str
     thread_replied: bool
@@ -58,6 +59,7 @@ class Message:
             'from': self.from_header,
             'to': self.to_header,
             'subject': self.subject,
+            'date': self.date,
             'body': self.body,
             'snippet': self.snippet,
             'thread_replied': self.thread_replied,
@@ -235,6 +237,7 @@ class GmailClient:
             from_header=headers.get('from', ''),
             to_header=headers.get('to', ''),
             subject=headers.get('subject', ''),
+            date=headers.get('date', ''),
             body=body,
             snippet=raw.get('snippet', ''),
             thread_replied=thread_replied,
@@ -332,6 +335,23 @@ class GmailClient:
             .execute()
         )
         LOGGER.info('sent unsubscribe mail %s to %s', sent.get('id'), to)
+        return sent['id']
+
+    def send_html(
+        self, *, to: tuple[str, ...], subject: str, html: str
+    ) -> str:
+        """Send a standalone HTML email to one or more recipients.
+
+        Sent from the authenticated account. Returns the sent id.
+        """
+        raw_b64 = _encode_html(to=to, subject=subject, html=html)
+        sent = (
+            self._service.users()
+            .messages()
+            .send(userId='me', body={'raw': raw_b64})
+            .execute()
+        )
+        LOGGER.info('sent report %s to %s', sent.get('id'), ', '.join(to))
         return sent['id']
 
     def _has_prior_correspondence(
@@ -465,4 +485,15 @@ def _encode_reply(
     if references:
         msg['References'] = references
     msg.set_content(body)
+    return base64.urlsafe_b64encode(msg.as_bytes()).decode()
+
+
+def _encode_html(*, to: tuple[str, ...], subject: str, html: str) -> str:
+    msg = email.message.EmailMessage(policy=email.policy.default)
+    msg['To'] = ', '.join(to)
+    msg['Subject'] = subject
+    msg.set_content(
+        'This report is best viewed in an HTML-capable mail client.'
+    )
+    msg.add_alternative(html, subtype='html')
     return base64.urlsafe_b64encode(msg.as_bytes()).decode()

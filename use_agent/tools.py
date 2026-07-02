@@ -15,6 +15,7 @@ import claude_agent_sdk
 
 from use_agent import cache as cache_mod
 from use_agent import gmail
+from use_agent import storage as storage_mod
 
 LOGGER = logging.getLogger(__name__)
 
@@ -155,9 +156,64 @@ def _http_unsubscribe(url: str, *, one_click: bool) -> tuple[bool, str]:
         return False, f'{type(exc).__name__}: {exc}'
 
 
+def _build_record_action_tool(store: storage_mod.Store | None) -> typing.Any:
+    """Build the ``record_action`` tool bound to ``store``.
+
+    Extracted from :func:`build_mcp_server` to keep that function
+    under the complexity limit. A ``None`` store makes the tool a
+    no-op (used on ``--dry-run``).
+    """
+
+    @claude_agent_sdk.tool(
+        'record_action',
+        (
+            'Persist a message that was acted upon to the action '
+            'history. Call this once after each successful reply, '
+            'archive, unsubscribe, or trash — never for skipped '
+            'messages and never on a dry run. Copy `sender`, '
+            '`subject`, and `sent_at` (the message `date`) from the '
+            'preceding `get_message`; pass the `classification`, '
+            '`category` (a 1-5 word content label), `response_mode`, '
+            '`action_taken`, and `score` you assigned.'
+        ),
+        {
+            'message_id': str,
+            'sender': str,
+            'subject': str,
+            'sent_at': str,
+            'classification': str,
+            'category': str,
+            'response_mode': str,
+            'action_taken': str,
+            'score': int,
+        },
+    )
+    async def gmail_record_action(
+        args: dict[str, typing.Any],
+    ) -> dict[str, typing.Any]:
+        if store is None:
+            return _text_result({'recorded': False, 'reason': 'no store'})
+        store.record(
+            sender=args.get('sender', ''),
+            subject=args.get('subject', ''),
+            sent_at=args.get('sent_at', ''),
+            classification=args.get('classification', ''),
+            category=args.get('category', ''),
+            response_mode=args.get('response_mode', ''),
+            action_taken=args.get('action_taken', ''),
+            score=args.get('score'),
+            message_id=args.get('message_id', ''),
+            source='tool',
+        )
+        return _text_result({'recorded': True})
+
+    return gmail_record_action
+
+
 def build_mcp_server(
     client: gmail.GmailClient,
     seen: cache_mod.Cache,
+    store: storage_mod.Store | None = None,
 ) -> typing.Any:
     """Return an SDK MCP server exposing Gmail operations.
 
@@ -165,6 +221,9 @@ def build_mcp_server(
     already investigated. The ``search`` tool filters it out of
     its results, and ``get_message`` adds to it, so a single message
     is only ever investigated once while it lives in the inbox.
+
+    ``store`` is the action-history database. When ``None`` (e.g. a
+    ``--dry-run``), the ``record_action`` tool becomes a no-op.
 
     The server name is :data:`MCP_SERVER_NAME`; each tool is reachable
     from the agent as ``mcp__gmail__<tool>``.
@@ -291,6 +350,7 @@ def build_mcp_server(
         gmail_archive_and_mark_read,
         gmail_unsubscribe_and_trash,
         gmail_trash,
+        _build_record_action_tool(store),
     ]
     return claude_agent_sdk.create_sdk_mcp_server(
         name=MCP_SERVER_NAME,
@@ -306,4 +366,5 @@ ALLOWED_TOOLS: tuple[str, ...] = (
     f'mcp__{MCP_SERVER_NAME}__archive_and_mark_read',
     f'mcp__{MCP_SERVER_NAME}__unsubscribe_and_trash',
     f'mcp__{MCP_SERVER_NAME}__trash',
+    f'mcp__{MCP_SERVER_NAME}__record_action',
 )
