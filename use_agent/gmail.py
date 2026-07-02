@@ -19,8 +19,8 @@ LOGGER = logging.getLogger(__name__)
 
 # Guard against huge inboxes: each page costs one API call. 20 pages
 # of 500 covers 10,000 messages — well past any realistic use.
-_INBOX_LIST_PAGE_CAP: int = 20
-_INBOX_LIST_PAGE_SIZE: int = 500
+_LIST_PAGE_CAP: int = 20
+_LIST_PAGE_SIZE: int = 500
 
 # A sender is treated as an established inbound contact (not cold
 # outreach) if they've been emailing since at least this long before
@@ -181,24 +181,25 @@ class GmailClient:
             )
         return out
 
-    def list_inbox_message_ids(self) -> set[str] | None:
-        """Return every message_id currently labeled INBOX.
+    def list_message_ids(self, query: str = 'in:inbox') -> set[str] | None:
+        """Return every message_id matching ``query``.
 
-        Paginates over ``users.messages.list`` with ``q=in:inbox``.
-        Returns ``None`` if pagination exceeds the page cap without
-        finishing — callers should treat that as "unknown" and skip
-        any cache-prune step that would otherwise drop real entries.
+        Paginates over ``users.messages.list`` with ``q=query``
+        (defaults to ``in:inbox``). Returns ``None`` if pagination
+        exceeds the page cap without finishing — callers should treat
+        that as "unknown" and skip any cache-prune step that would
+        otherwise drop real entries.
         """
         ids: set[str] = set()
         page_token: str | None = None
-        for _ in range(_INBOX_LIST_PAGE_CAP):
+        for _ in range(_LIST_PAGE_CAP):
             resp = (
                 self._service.users()
                 .messages()
                 .list(
                     userId='me',
-                    q='in:inbox',
-                    maxResults=_INBOX_LIST_PAGE_SIZE,
+                    q=query,
+                    maxResults=_LIST_PAGE_SIZE,
                     pageToken=page_token,
                 )
                 .execute()
@@ -209,8 +210,8 @@ class GmailClient:
             if not page_token:
                 return ids
         LOGGER.warning(
-            'inbox listing exceeded %d pages; skipping cache prune',
-            _INBOX_LIST_PAGE_CAP,
+            'message listing exceeded %d pages; skipping cache prune',
+            _LIST_PAGE_CAP,
         )
         return None
 

@@ -1,6 +1,7 @@
 """Orchestrates a Claude Agent run over the Gmail inbox."""
 
 import logging
+import re
 
 import claude_agent_sdk
 import jinja2
@@ -373,7 +374,7 @@ async def run(
         scopes=config.GMAIL_SCOPES,
     )
     client = gmail.GmailClient(creds)
-    seen = _load_and_prune_cache(client)
+    seen = _load_and_prune_cache(client, _prune_query(effective_query))
     # No history is written on a dry run; the store stays None and the
     # record_action tool no-ops.
     store = (
@@ -473,25 +474,50 @@ def _forward(message: object, reporter: reporter_mod.Reporter) -> None:
                 reporter.on_text(block.text)
 
 
+_PRUNE_OPERAND_RE = re.compile(r'(?<!-)\b(in|label):(\S+)')
+
+
+def _prune_query(query: str) -> str:
+    """Derive the cache-prune folder scope from a run's query.
+
+    Extracts the first ``in:<x>`` or ``label:<x>`` operand and
+    returns it as a standalone folder query, so pruning lists only
+    the folder the run actually targets. Falls back to ``in:inbox``
+    when the query names no folder — keeping default inbox runs
+    byte-for-byte identical.
+    """
+    match = _PRUNE_OPERAND_RE.search(query)
+    if match is None:
+        return 'in:inbox'
+    return f'{match.group(1)}:{match.group(2)}'
+
+
 def _load_and_prune_cache(
     client: gmail.GmailClient,
+    prune_query: str = 'in:inbox',
 ) -> cache_mod.Cache:
-    """Load the seen-message cache and drop entries no longer in inbox.
+    """Load the seen-message cache and drop entries no longer present.
 
-    A listing failure (network error, auth hiccup, pagination cap)
-    degrades gracefully: the cache is left untouched rather than
-    wiped, so a transient failure can't force re-investigation of
-    every cached message.
+    ``prune_query`` scopes the listing to the folder the run targets
+    (e.g. ``in:inbox`` or ``in:spam``); cached ids outside that folder
+    are pruned. A listing failure (network error, auth hiccup,
+    pagination cap) degrades gracefully: the cache is left untouched
+    rather than wiped, so a transient failure can't force
+    re-investigation of every cached message.
     """
     seen = cache_mod.Cache.load(config.cache_path())
     try:
-        inbox_ids = client.list_inbox_message_ids()
+        current_ids = client.list_message_ids(prune_query)
     except Exception:
-        LOGGER.exception('failed to list inbox; skipping cache prune')
-        inbox_ids = None
-    if inbox_ids is not None:
-        dropped = seen.retain(inbox_ids)
+        LOGGER.exception('failed to list messages; skipping cache prune')
+        current_ids = None
+    if current_ids is not None:
+        dropped = seen.retain(current_ids)
         if dropped:
-            LOGGER.debug('pruned %d cache entries no longer in inbox', dropped)
+            LOGGER.debug(
+                'pruned %d cache entries no longer in %s',
+                dropped,
+                prune_query,
+            )
     LOGGER.debug('seen-message cache: %d entries', len(seen))
     return seen
