@@ -3,6 +3,61 @@
 from use_agent import gmail
 
 
+class _FakeList:
+    """Records the ``q`` passed to ``users().messages().list``."""
+
+    def __init__(self, calls: list[str], pages: list[dict]) -> None:
+        self._calls = calls
+        self._pages = pages
+
+    def list(self, *, userId, q, maxResults, pageToken):  # noqa: N803
+        self._calls.append(q)
+        return self
+
+    def execute(self) -> dict:
+        return self._pages.pop(0)
+
+
+class _FakeMessages:
+    def __init__(self, lst: _FakeList) -> None:
+        self._lst = lst
+
+    def messages(self) -> _FakeList:
+        return self._lst
+
+
+class _FakeService:
+    def __init__(self, lst: _FakeList) -> None:
+        self._msgs = _FakeMessages(lst)
+
+    def users(self) -> _FakeMessages:
+        return self._msgs
+
+
+def _client_with(pages: list[dict], calls: list[str]) -> gmail.GmailClient:
+    client = object.__new__(gmail.GmailClient)
+    client._service = _FakeService(_FakeList(calls, pages))
+    return client
+
+
+def test_list_message_ids_defaults_to_inbox() -> None:
+    calls: list[str] = []
+    client = _client_with([{'messages': [{'id': 'a'}]}], calls)
+    assert client.list_message_ids() == {'a'}
+    assert calls == ['in:inbox']
+
+
+def test_list_message_ids_honors_query_and_paginates() -> None:
+    calls: list[str] = []
+    pages = [
+        {'messages': [{'id': 'a'}], 'nextPageToken': 't'},
+        {'messages': [{'id': 'b'}]},
+    ]
+    client = _client_with(pages, calls)
+    assert client.list_message_ids('in:spam') == {'a', 'b'}
+    assert calls == ['in:spam', 'in:spam']
+
+
 def test_parses_https_and_mailto_pair() -> None:
     header = (
         '<mailto:unsub@example.com?subject=unsub-token>, '

@@ -181,13 +181,14 @@ class GmailClient:
             )
         return out
 
-    def list_inbox_message_ids(self) -> set[str] | None:
-        """Return every message_id currently labeled INBOX.
+    def list_message_ids(self, query: str = 'in:inbox') -> set[str] | None:
+        """Return every message_id matching ``query``.
 
-        Paginates over ``users.messages.list`` with ``q=in:inbox``.
-        Returns ``None`` if pagination exceeds the page cap without
-        finishing — callers should treat that as "unknown" and skip
-        any cache-prune step that would otherwise drop real entries.
+        Paginates over ``users.messages.list`` with ``q=query``
+        (defaults to ``in:inbox``). Returns ``None`` if pagination
+        exceeds the page cap without finishing — callers should treat
+        that as "unknown" and skip any cache-prune step that would
+        otherwise drop real entries.
         """
         ids: set[str] = set()
         page_token: str | None = None
@@ -197,7 +198,7 @@ class GmailClient:
                 .messages()
                 .list(
                     userId='me',
-                    q='in:inbox',
+                    q=query,
                     maxResults=_INBOX_LIST_PAGE_SIZE,
                     pageToken=page_token,
                 )
@@ -209,7 +210,7 @@ class GmailClient:
             if not page_token:
                 return ids
         LOGGER.warning(
-            'inbox listing exceeded %d pages; skipping cache prune',
+            'message listing exceeded %d pages; skipping cache prune',
             _INBOX_LIST_PAGE_CAP,
         )
         return None
