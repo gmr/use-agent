@@ -18,3 +18,5 @@ config.toml
 .env.*
 !.env.example
 !config.example.toml
+
+justfile
