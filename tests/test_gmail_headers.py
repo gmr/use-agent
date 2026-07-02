@@ -54,3 +54,33 @@ def test_http_only_scheme_is_accepted_but_not_one_click() -> None:
     targets = gmail.unsubscribe_targets(header, 'List-Unsubscribe=One-Click')
     assert targets['http_urls'] == ['http://example.com/unsub']
     assert targets['one_click'] is False
+
+
+def test_relationship_queries_build_sent_and_inbound_bounds() -> None:
+    queries = gmail._relationship_queries(
+        'Jane Rep <jane@vendor.com>', 1_700_000_000, min_age_days=60
+    )
+    # Cheapest outbound signal first; inbound cutoff = 1_700_000_000
+    # - 60 * 86400 = 1_694_816_000.
+    assert queries == [
+        'in:sent to:jane@vendor.com before:1700000000',
+        'from:jane@vendor.com before:1694816000',
+    ]
+
+
+def test_relationship_queries_empty_without_address() -> None:
+    assert gmail._relationship_queries('', 1_700_000_000) == []
+
+
+def test_relationship_queries_empty_without_timestamp() -> None:
+    # No usable internalDate means no trustworthy before: bound, so
+    # skip the lookup rather than search unbounded Sent mail.
+    assert gmail._relationship_queries('jane@vendor.com', 0) == []
+
+
+def test_relationship_queries_omits_inbound_for_old_message() -> None:
+    # A message older than the age window can't have an inbound
+    # cutoff above epoch 0, so only the outbound query is built.
+    assert gmail._relationship_queries('jane@vendor.com', 100) == [
+        'in:sent to:jane@vendor.com before:100'
+    ]

@@ -13,6 +13,11 @@ Apply one of three classifications to each candidate email:
 - `subject`: email subject line
 - `body`: email body text (first message in thread only)
 - `thread_replied`: boolean, true if thread already has a SENT message
+- `prior_correspondence`: boolean, true if this sender is an
+  established contact — either the user previously sent email to this
+  exact address, or the sender has been emailing the user since well
+  before this message (a long-standing relationship, not a fresh cold
+  sequence)
 - `list_unsubscribe`: raw ``List-Unsubscribe`` header, or empty
 - `list_unsubscribe_post`: raw ``List-Unsubscribe-Post`` header
 - `list_id`: raw ``List-Id`` header, or empty
@@ -80,11 +85,13 @@ Classify as `COLD_SALES` if total score >= 3.
 ### Exceptions — do NOT classify as COLD_SALES
 
 {% if vendor_names %}
-- Email is from a current {{ organization }} vendor ({{ vendor_names | join(', ') }}) AND is about billing, renewal, or account issues — even if it includes upsell language
+- Email is from a current {{ organization }} vendor ({{ vendor_names | join(', ') }}) — including account-rep outreach, check-ins, and business reviews, not only billing, renewal, or account notices. A known current vendor is an existing relationship, not cold outreach
 {% endif %}
 - Email is a transactional notification, invoice, or receipt
 - Email is a newsletter or digest the user subscribed to
 - `thread_replied` is true
+- `prior_correspondence` is true — this is an established contact,
+  not cold outreach
 {% if safelist_domains %}
 - Sender domain is one of the safelisted internal domains ({% for d in safelist_domains %}`{{ d }}`{% if not loop.last %}, {% endif %}{% endfor %})
 {% endif %}
@@ -159,6 +166,8 @@ bulk senders) is similarly near-definitive on its own.
 ### Exceptions — do NOT classify as BULK_MARKETING
 
 - `thread_replied` is true
+- `prior_correspondence` is true — treat it as an established
+  contact, not bulk outreach
 {% if safelist_domains %}
 - Sender domain is one of the safelisted internal domains ({% for d in safelist_domains %}`{{ d }}`{% if not loop.last %}, {% endif %}{% endfor %})
 {% endif %}
@@ -197,8 +206,9 @@ For each message, produce a JSON object with this shape:
 - `hard_remove`: default for all `COLD_SALES`
 - `hard_remove_with_correction`: `COLD_SALES` where `false_premise`
   signal fired; set `correction_note` to the specific false fact
-- `specific_decline`: `COLD_SALES` from a known current vendor rep
-  (not billing)
+- `specific_decline`: `COLD_SALES` from a vendor rep NOT covered by
+  the vendor exemption above (e.g. no `[vendors]` configured) —
+  politely decline rather than a blunt removal
 - `unsubscribe_and_delete`: `BULK_MARKETING` with a
   `list_unsubscribe` header present
 - `delete`: `BULK_MARKETING` with no `list_unsubscribe` header
