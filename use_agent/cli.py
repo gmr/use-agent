@@ -2,12 +2,13 @@
 
 import argparse
 import asyncio
+import datetime
 import logging
 import pathlib
 import re
 import sys
 
-from use_agent import agent, auth, config, reporter
+from use_agent import agent, auth, config, gmail, report, reporter
 from use_agent import settings as settings_mod
 
 LOGGER = logging.getLogger(__name__)
@@ -130,6 +131,49 @@ def _build_parser() -> argparse.ArgumentParser:
         help='emit only the parsed summary as JSON on stdout',
     )
     run_p.set_defaults(output=reporter.Mode.PRETTY)
+
+    report_p = sub.add_parser(
+        'report',
+        help='render (or email) an HTML report of recent actions',
+    )
+    report_p.add_argument(
+        '--days',
+        type=int,
+        default=7,
+        help='window size in days ending now; default 7',
+    )
+    report_p.add_argument(
+        '--since',
+        type=datetime.date.fromisoformat,
+        default=None,
+        help='start date (YYYY-MM-DD); overrides --days',
+    )
+    report_p.add_argument(
+        '--to',
+        action='append',
+        default=None,
+        metavar='ADDR',
+        help=(
+            'recipient for --email (repeatable); overrides '
+            '[report] recipients in config.toml'
+        ),
+    )
+    report_p.add_argument(
+        '--subject',
+        default=None,
+        help='override the emailed report subject line',
+    )
+    report_p.add_argument(
+        '--email',
+        action='store_true',
+        help='email the report instead of writing HTML to stdout/--output',
+    )
+    report_p.add_argument(
+        '--output',
+        type=pathlib.Path,
+        default=None,
+        help='write the HTML report to this file instead of stdout',
+    )
     return parser
 
 
@@ -200,6 +244,40 @@ async def _run_daemon(
             raise
 
 
+def _cmd_report(args: argparse.Namespace) -> int:
+    html = report.render(config.db_path(), days=args.days, since=args.since)
+    if args.email:
+        # Settings (recipients, subject) are only needed to email.
+        settings = settings_mod.Settings.load()
+        recipients = tuple(args.to) if args.to else settings.report_recipients
+        if not recipients:
+            LOGGER.error(
+                'no recipients; set [report] recipients in config.toml '
+                'or pass --to'
+            )
+            return 2
+        creds = auth.load_credentials(
+            credentials_file=config.credentials_path(),
+            token_file=config.token_path(),
+            scopes=config.GMAIL_SCOPES,
+        )
+        client = gmail.GmailClient(creds)
+        client.send_html(
+            to=recipients,
+            subject=args.subject or settings.report_subject,
+            html=html,
+        )
+        LOGGER.info('report emailed to %s', ', '.join(recipients))
+        return 0
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(html, encoding='utf-8')
+        LOGGER.info('report written to %s', args.output)
+        return 0
+    sys.stdout.write(html)
+    return 0
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     settings = settings_mod.Settings.load()
     coro = (
@@ -223,6 +301,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_auth()
         case 'run':
             return _cmd_run(args)
+        case 'report':
+            return _cmd_report(args)
         case _:  # pragma: no cover - argparse enforces choices
             parser.error(f'unknown command: {args.command}')
             return 2

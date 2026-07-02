@@ -12,6 +12,9 @@ PROMPTS_DIR: pathlib.Path = pathlib.Path(__file__).parent / 'prompts'
 CLASSIFIER_PROMPT: pathlib.Path = PROMPTS_DIR / 'classifier.md'
 REPLY_PROMPT: pathlib.Path = PROMPTS_DIR / 'reply.md'
 
+TEMPLATES_DIR: pathlib.Path = pathlib.Path(__file__).parent / 'templates'
+REPORT_TEMPLATE: pathlib.Path = TEMPLATES_DIR / 'report.html.j2'
+
 
 def _config_home() -> pathlib.Path:
     raw = os.environ.get('XDG_CONFIG_HOME')
