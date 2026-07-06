@@ -101,3 +101,10 @@ flake8-quotes = { inline-quotes = "single" }
 
 [tool.ruff.lint.isort]
 known-first-party = ["use_agent"]
+
+# Public project: always resolve against pypi.org, overriding any
+# user-level uv config that points at a private index.
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
