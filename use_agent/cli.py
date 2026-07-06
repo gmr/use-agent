@@ -140,7 +140,7 @@ def _build_parser() -> argparse.ArgumentParser:
         '--days',
         type=int,
         default=7,
-        help='window size in days ending now; default 7',
+        help='last N calendar days, today inclusive; default 7',
     )
     report_p.add_argument(
         '--since',

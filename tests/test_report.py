@@ -5,7 +5,8 @@ import datetime
 from use_agent import report, storage
 
 _NOW = datetime.datetime(2026, 6, 30, 6, 0, tzinfo=datetime.UTC)
-_START = _NOW - datetime.timedelta(days=7)
+# render() with days=7 starts at midnight 6 days before end's date.
+_START = datetime.datetime(2026, 6, 24, 0, 0, tzinfo=datetime.UTC)
 
 
 def _row(**overrides):
@@ -123,8 +124,8 @@ def test_responses_labelled():
 def test_days_span_window_and_sum_to_total():
     rows = [_row(), _row(), _row()]
     days = _ctx(rows)['days']
-    # start..end inclusive over a 7-day window is 8 calendar rows.
-    assert len(days) == 8
+    # a 7-calendar-day window is exactly 7 rows, start..end inclusive.
+    assert len(days) == 7
     assert sum(d['count'] for d in days) == 3
 
 

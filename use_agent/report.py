@@ -6,7 +6,8 @@ Reads rows from the SQLite store written by
 inline-styled HTML suitable for emailing.
 
 The window is filtered on ``processed_at`` (when use-agent acted),
-defaulting to the last 7 days. Timestamps are grouped in the local
+defaulting to the last 7 calendar days (today inclusive, from local
+midnight). Timestamps are grouped in the local
 timezone so "Activity by day" lines up with the reader's calendar.
 """
 
@@ -57,16 +58,22 @@ def render(
 ) -> str:
     """Render the weekly report to a standalone HTML string.
 
-    ``since`` overrides ``days`` when given. ``now`` is injectable for
-    deterministic tests; it defaults to the current local time.
+    ``days`` selects the last N calendar days (today inclusive), so
+    the window starts at local midnight and the "Activity by day"
+    chart has exactly N rows. ``since`` overrides ``days`` when
+    given. ``now`` is injectable for deterministic tests; it
+    defaults to the current local time.
     """
     end = now or datetime.datetime.now().astimezone()
     if since is not None:
-        start = datetime.datetime.combine(
-            since, datetime.time.min
-        ).astimezone()
+        since_date = since
     else:
-        start = end - datetime.timedelta(days=days)
+        since_date = end.astimezone().date() - datetime.timedelta(
+            days=days - 1
+        )
+    start = datetime.datetime.combine(
+        since_date, datetime.time.min
+    ).astimezone()
     rows = _fetch_rows(db_path, start)
     context = _build_context(rows, start=start, end=end)
     return (
