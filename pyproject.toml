@@ -1,6 +1,6 @@
 [project]
 name = "use-agent"
-version = "1.0.1"
+version = "1.0.2"
 description = "Claude Agent that triages unsolicited sales email in Gmail."
 readme = "README.md"
 requires-python = ">=3.14"
