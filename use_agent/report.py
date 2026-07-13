@@ -80,6 +80,8 @@ def render(
         this_monday = today - datetime.timedelta(days=today.weekday())
         start_date = this_monday - datetime.timedelta(days=7)
         end_date = this_monday - datetime.timedelta(days=1)
+    if start_date > end_date:
+        raise ValueError('report start date must not be after end date')
     start = datetime.datetime.combine(
         start_date, datetime.time.min
     ).astimezone()

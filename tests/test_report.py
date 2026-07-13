@@ -2,6 +2,8 @@
 
 import datetime
 
+import pytest
+
 from use_agent import report, storage
 
 _NOW = datetime.datetime(2026, 6, 30, 6, 0, tzinfo=datetime.UTC)
@@ -163,6 +165,15 @@ def test_render_defaults_to_previous_full_week(tmp_path):
     now = datetime.datetime(2026, 6, 30, 6, 0).astimezone()
     html = report.render(tmp_path / 'nope.db', now=now)
     assert f'Jun 22 {report._EN_DASH} Jun 28, 2026' in html
+
+
+def test_render_rejects_inverted_window(tmp_path):
+    now = datetime.datetime(2026, 6, 30, 6, 0).astimezone()
+    with pytest.raises(ValueError, match='must not be after'):
+        report.render(tmp_path / 'nope.db', days=0, now=now)
+    future = now.date() + datetime.timedelta(days=1)
+    with pytest.raises(ValueError, match='must not be after'):
+        report.render(tmp_path / 'nope.db', since=future, now=now)
 
 
 def test_offenders_unescape_double_escaped_sender():
