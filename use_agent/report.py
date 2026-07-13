@@ -5,15 +5,18 @@ Reads rows from the SQLite store written by
 ``report.html.j2`` template expects, and renders standalone
 inline-styled HTML suitable for emailing.
 
-The window is filtered on ``processed_at`` (when use-agent acted),
-defaulting to the last 7 calendar days (today inclusive, from local
-midnight). Timestamps are grouped in the local
-timezone so "Activity by day" lines up with the reader's calendar.
+The window is filtered on ``processed_at`` (when use-agent acted).
+With no explicit ``days``/``since`` it covers the previous full
+calendar week (last Monday through Sunday); ``days`` selects a
+trailing window ending today instead. Timestamps are grouped in the
+local timezone so "Activity by day" lines up with the reader's
+calendar.
 """
 
 import collections
 import datetime
 import email.utils
+import html
 import logging
 import pathlib
 import sqlite3
@@ -52,30 +55,37 @@ _RESPONSE_LABELS: dict[str, str] = {
 def render(
     db_path: pathlib.Path,
     *,
-    days: int = 7,
+    days: int | None = None,
     since: datetime.date | None = None,
     now: datetime.datetime | None = None,
 ) -> str:
     """Render the weekly report to a standalone HTML string.
 
-    ``days`` selects the last N calendar days (today inclusive), so
-    the window starts at local midnight and the "Activity by day"
-    chart has exactly N rows. ``since`` overrides ``days`` when
-    given. ``now`` is injectable for deterministic tests; it
-    defaults to the current local time.
+    With neither ``days`` nor ``since`` the window is the previous
+    full calendar week (last Monday through Sunday). ``days`` selects
+    a trailing window of the last N calendar days ending today;
+    ``since`` starts the window on a specific date and ends today.
+    Either override makes "Activity by day" span exactly that window.
+    ``now`` is injectable for deterministic tests; it defaults to the
+    current local time.
     """
-    end = now or datetime.datetime.now().astimezone()
+    now = now or datetime.datetime.now().astimezone()
+    today = now.astimezone().date()
     if since is not None:
-        since_date = since
+        start_date, end_date = since, today
+    elif days is not None:
+        start_date = today - datetime.timedelta(days=days - 1)
+        end_date = today
     else:
-        since_date = end.astimezone().date() - datetime.timedelta(
-            days=days - 1
-        )
+        this_monday = today - datetime.timedelta(days=today.weekday())
+        start_date = this_monday - datetime.timedelta(days=7)
+        end_date = this_monday - datetime.timedelta(days=1)
     start = datetime.datetime.combine(
-        since_date, datetime.time.min
+        start_date, datetime.time.min
     ).astimezone()
-    rows = _fetch_rows(db_path, start)
-    context = _build_context(rows, start=start, end=end)
+    end = datetime.datetime.combine(end_date, datetime.time.max).astimezone()
+    rows = _fetch_rows(db_path, start, end)
+    context = _build_context(rows, start=start, end=end, generated=now)
     return (
         _environment()
         .get_template(config.REPORT_TEMPLATE.name)
@@ -92,9 +102,11 @@ def _environment() -> jinja2.Environment:
 
 
 def _fetch_rows(
-    db_path: pathlib.Path, start: datetime.datetime
+    db_path: pathlib.Path,
+    start: datetime.datetime,
+    end: datetime.datetime,
 ) -> list[dict[str, typing.Any]]:
-    """Return action rows with ``processed_at`` at or after ``start``.
+    """Return action rows with ``processed_at`` within ``[start, end]``.
 
     A missing database or table yields an empty report rather than an
     error — the user may simply not have run the agent yet.
@@ -106,8 +118,11 @@ def _fetch_rows(
     try:
         cursor = conn.execute(
             'SELECT * FROM actions WHERE processed_at >= ? '
-            'ORDER BY processed_at',
-            (start.astimezone(datetime.UTC).isoformat(),),
+            'AND processed_at <= ? ORDER BY processed_at',
+            (
+                start.astimezone(datetime.UTC).isoformat(),
+                end.astimezone(datetime.UTC).isoformat(),
+            ),
         )
         return [dict(r) for r in cursor.fetchall()]
     except sqlite3.OperationalError as exc:
@@ -124,6 +139,7 @@ def _build_context(
     *,
     start: datetime.datetime,
     end: datetime.datetime,
+    generated: datetime.datetime | None = None,
 ) -> dict[str, typing.Any]:
     total = len(rows)
     return {
@@ -141,7 +157,7 @@ def _build_context(
             'spam folder periodically, auto-responds to cold outreach, '
             'unsubscribes you from bulk marketing, and clears it out.'
         ),
-        'generatedAt': _format_stamp(end),
+        'generatedAt': _format_stamp(generated or end),
     }
 
 
@@ -253,8 +269,12 @@ def _offenders(
 ) -> list[dict[str, typing.Any]]:
     grouped: dict[str, dict[str, typing.Any]] = {}
     for r in rows:
-        name, addr = email.utils.parseaddr(r['sender'] or '')
-        key = (addr or r['sender'] or '').lower()
+        # Some senders arrive already HTML-escaped ('&lt;a@b.com&gt;');
+        # unescape first so parseaddr sees real angle brackets and the
+        # template's autoescape encodes them exactly once.
+        sender = html.unescape(r['sender'] or '')
+        name, addr = email.utils.parseaddr(sender)
+        key = (addr or sender).lower()
         if not key:
             continue
         entry = grouped.setdefault(
