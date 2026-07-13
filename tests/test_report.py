@@ -2,6 +2,8 @@
 
 import datetime
 
+import pytest
+
 from use_agent import report, storage
 
 _NOW = datetime.datetime(2026, 6, 30, 6, 0, tzinfo=datetime.UTC)
@@ -144,7 +146,9 @@ def test_render_full_html(tmp_path):
     )
     store.close()
 
-    html = report.render(db, days=7, now=_NOW)
+    # Rows are stamped at record time (real now); render with a
+    # matching now so the trailing window includes them.
+    html = report.render(db, days=7, now=datetime.datetime.now().astimezone())
     assert html.startswith('<!DOCTYPE html>')
     assert '1 unwanted emails handled for you' in html
     assert 'outreach@growthpartners.io' in html
@@ -154,6 +158,32 @@ def test_render_full_html(tmp_path):
 def test_render_missing_db_is_empty_report(tmp_path):
     html = report.render(tmp_path / 'nope.db', days=7, now=_NOW)
     assert '0 unwanted emails handled for you' in html
+
+
+def test_render_defaults_to_previous_full_week(tmp_path):
+    # Tue Jun 30 2026 -> previous Mon-Sun is Jun 22 through Jun 28.
+    now = datetime.datetime(2026, 6, 30, 6, 0).astimezone()
+    html = report.render(tmp_path / 'nope.db', now=now)
+    assert f'Jun 22 {report._EN_DASH} Jun 28, 2026' in html
+
+
+def test_render_rejects_inverted_window(tmp_path):
+    now = datetime.datetime(2026, 6, 30, 6, 0).astimezone()
+    with pytest.raises(ValueError, match='must not be after'):
+        report.render(tmp_path / 'nope.db', days=0, now=now)
+    future = now.date() + datetime.timedelta(days=1)
+    with pytest.raises(ValueError, match='must not be after'):
+        report.render(tmp_path / 'nope.db', since=future, now=now)
+
+
+def test_offenders_unescape_double_escaped_sender():
+    rows = [
+        _row(sender='jim jachetta &lt;jim@vidovation.com&gt;'),
+        _row(sender='jim jachetta &lt;jim@vidovation.com&gt;'),
+    ]
+    offender = _ctx(rows)['offenders'][0]
+    assert offender['name'] == 'jim jachetta'
+    assert offender['addr'] == 'jim@vidovation.com'
 
 
 def test_render_escapes_sender(tmp_path):
@@ -169,6 +199,6 @@ def test_render_escapes_sender(tmp_path):
         message_id='m1',
     )
     store.close()
-    html = report.render(db, days=7, now=_NOW)
+    html = report.render(db, days=7, now=datetime.datetime.now().astimezone())
     assert '<script>x</script>' not in html
     assert '&lt;script&gt;' in html

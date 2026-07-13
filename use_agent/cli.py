@@ -139,8 +139,11 @@ def _build_parser() -> argparse.ArgumentParser:
     report_p.add_argument(
         '--days',
         type=int,
-        default=7,
-        help='last N calendar days, today inclusive; default 7',
+        default=None,
+        help=(
+            'last N calendar days, today inclusive; default is the '
+            'previous full calendar week (Mon-Sun)'
+        ),
     )
     report_p.add_argument(
         '--since',
