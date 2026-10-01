@@ -1,5 +1,7 @@
 # use-agent
 
+**Do Not Use: 2026-10-01: Due to changes in the Claude Agent SDK, I found over time that the agent started modifying the code it was running and doing other actions than what was specified. I'm actively rewriting this to use a more lightweight jev like approach.**
+
 A Claude Agent that scans a Gmail inbox for unsolicited sales email
 and bulk marketing, then takes the right action for each — a terse
 reply for cold sales pitches, an RFC 8058 one-click unsubscribe for
